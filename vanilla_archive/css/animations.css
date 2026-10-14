@@ -1,0 +1,54 @@
+/* ==========================================================================
+   ANIMATIONS — Scroll-Driven & Micro-Interactions (Pro Max)
+   ========================================================================== */
+
+/* Modern CSS View Transitions */
+@view-transition {
+  navigation: auto;
+}
+
+/* Base Reveal Class */
+.reveal {
+  opacity: 0;
+  transform: translateY(40px) scale(0.98);
+  filter: blur(8px);
+  transition: 
+    opacity var(--duration-slower) var(--ease-snappy), 
+    transform var(--duration-slower) var(--ease-snappy),
+    filter var(--duration-slower) var(--ease-snappy);
+  will-change: opacity, transform, filter;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+}
+
+/* Stagger Utilities */
+.stagger-1 { transition-delay: 50ms; }
+.stagger-2 { transition-delay: 100ms; }
+.stagger-3 { transition-delay: 150ms; }
+.stagger-4 { transition-delay: 200ms; }
+.stagger-5 { transition-delay: 250ms; }
+
+/* Micro-animations */
+@keyframes ambientGlow {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+  100% { transform: translate(-50%, -50%) scale(1.1); opacity: 0.8; }
+}
+
+@keyframes scrollInfinite {
+  to { transform: translateX(calc(-50% - 1rem)); } /* -1rem accounts for gap */
+}
+
+/* @property declarations for glowing border animations (Chromium only, graceful fallback) */
+@property --bg-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spin {
+  to { --bg-angle: 360deg; }
+}

@@ -1,0 +1,49 @@
+game_id,full_id,title,tags,state,is_won,levels_completed,win_levels,actions,human_baseline,rhae_score,official_score,time_sec
+lw01,lw01-63be02fb,Line Weave,"['static', 'puzzle', 'path', 'click']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.209
+bp01,bp01-63be02fb,Battery Mesh,"['static', 'puzzle', 'activation']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.416
+cf01,cf01-v1,Crop Fallow,"['static', 'path']",WIN,True,5,5,69,75,1.15,91.93344907407409,0.197
+mm04,mm04-v1,Memory Peek,"['memory', 'click']",WIN,True,7,7,167,75,0.2016924235361612,47.630706374502594,0.157
+mm03,mm03-63be02fb,Memory Triples (variant),"['static', 'memory', 'hidden']",WIN,True,5,5,84,75,0.7971938775510204,63.21938775510204,0.078
+mm02,mm02-63be02fb,Memory Triples,"['static', 'memory', 'hidden']",WIN,True,5,5,84,75,0.7971938775510204,63.21938775510204,0.079
+mm05,mm05-v1,Memory Sticky,"['memory', 'click']",WIN,True,7,7,167,75,0.2016924235361612,47.630706374502594,0.176
+bt01,bt01-63be02fb,Battery Steps,"['static', 'movement', '10-grid', 'resource']",WIN,True,5,5,65,75,1.15,93.69992441421012,0.135
+gp01,gp01-63be02fb,Grid Paint,"['static', 'click', 'pattern']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.244
+ff01,ff01-63be02fb,Flood Fill,"['topology', 'flood-fill', 'precision']",WIN,True,5,5,85,75,0.7785467128027681,80.1648024219057,0.799
+ms01,ms01-63be02fb,Blind Sapper,"['deduction', 'memory', 'hidden-state']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,2.383
+ct01,ct01-v1,Independent Cover,"['static', 'click', 'graph']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,1.119
+dg01,dg01-63be02fb,Dig Mud,"['static', 'movement', '10-grid', 'dig']",WIN,True,5,5,69,75,1.15,97.7739984882842,0.139
+bl01,bl01-63be02fb,Phase Wall,"['static', 'movement', 'phase']",WIN,True,5,5,64,75,1.15,100.0,0.133
+cz01,cz01-v1,Row XOR Pick,"['static', 'logic']",NOT_FINISHED,False,1,7,200,75,0.0,6.122448979591836,0.237
+au01,au01-v1,Bonus Steps,"['static', 'planning']",WIN,True,5,5,69,75,1.15,91.93344907407409,0.154
+sk02,sk02-63be02fb,Sokoban Slide Push,"['static', 'push', 'puzzle']",NOT_FINISHED,False,2,5,200,75,0.0,49.90740740740741,0.448
+co01,co01-641624b5,Color Gate,"['static', 'puzzle', '10-grid']",NOT_FINISHED,False,1,5,200,75,0.0,33.33333333333333,0.965
+wm01,wm01-63be02fb,Whack-a-Mole,"['static', 'action', 'whack-a-mole']",WIN,True,5,5,49,75,1.15,100.0,0.516
+ml01,ml01-63be02fb,Mirror Laser,"['static', 'puzzle', 'geometry']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.212
+pt01,pt01-63be02fb,Pattern Rotation,"['static', 'rotation', 'pattern-matching', 'click']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,2.218
+cw01,cw01-v1,Clause Toggle,"['logic', 'sat']",WIN,True,7,7,14,75,1.15,100.0,0.135
+ph01,ph01-63be02fb,Phase Interference,"['static', 'puzzle', 'field']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,7.355
+ez04,ez04-63be02fb,Go Down,"['static', 'tutorial', 'directional']",WIN,True,5,5,27,75,1.15,100.0,0.076
+sq01,sq01-63be02fb,Sequencing,"['sequencing', 'ordering', 'memory']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.427
+av01,av01-63be02fb,Avalanche,"['static', 'movement', 'physics']",WIN,True,5,5,62,75,1.15,87.01889644746788,0.126
+dd01,dd01-63be02fb,Routed Delivery,"['static', 'logistics', '48-grid']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,3.387
+cs01,cs01-v1,Vertex Cover Click,"['static', 'click', 'graph']",WIN,True,7,7,66,75,1.15,100.0,0.149
+cy01,cy01-63be02fb,Cyclic Conveyor,"['static', 'movement', 'conveyor']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.86
+rp01,rp01-63be02fb,Relay Pulse,"['static', 'puzzle', 'graph']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.536
+cv01,cv01-v1,List Coloring,"['graph', 'click']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,1.38
+lo05,lo05-v1,Knight Lights Out,"['static', 'click', 'pattern']",WIN,True,7,7,34,75,1.15,100.0,0.049
+lo02,lo02-63be02fb,Torus Lights Out,"['static', 'click', 'topology']",WIN,True,5,5,46,75,1.15,100.0,0.041
+as01,as01-63be02fb,Assembly Fetch,"['static', 'logistics', 'puzzle']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.576
+lo03,lo03-63be02fb,Torus Lights Out (variant),"['static', 'click', 'topology']",WIN,True,5,5,48,75,1.15,100.0,0.032
+lo04,lo04-v1,Diagonal Lights Out,"['static', 'click', 'pattern']",WIN,True,7,7,62,75,1.15,96.015625,0.047
+cx01,cx01-v1,Cut Gates,"['graph', 'click']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,1.326
+cr01,cr01-63be02fb,Creek Crossing,"['static', 'bridge', 'click']",WIN,True,5,5,93,75,0.6503642039542142,71.61487078491527,0.213
+bn01,bn01-63be02fb,Beacon Sweep,"['static', 'exploration', '64-grid']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.918
+ab01,ab01-v1,Mod Sandpile,"['simulation', 'click', 'sandpile-mod-win']",WIN,True,7,7,27,75,1.15,100.0,0.084
+rs01,rs01-63be02fb,Rule Switcher,"['static', 'puzzle', 'rule-switching', 'cognitive-flexibility']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.823
+ci01,ci01-v1,Crate Ice,"['static', 'planning', 'push']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.49
+sy01,sy01-63be02fb,Mirror Maker,"['symmetry', 'reflection', 'spatial', 'puzzle']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.785
+cu01,cu01-v1,Multiset Cover,"['tiling', 'click']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,0.145
+pb02,pb02-63be02fb,Two-Box Push,"['static', 'planning', 'push']",WIN,True,5,5,150,75,0.25,34.460280323864325,1.086
+cq01,cq01-63be02fb,Ring Tour,"['static', 'movement', 'coverage']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.62
+df01,df01-v1,Heat Field,"['static', 'simulation']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.649
+at01,at01-v1,Ant Trail,"['static', 'simulation']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.436

@@ -1,0 +1,26 @@
+game_id,full_id,title,tags,state,is_won,levels_completed,win_levels,actions,human_baseline,rhae_score,official_score,time_sec
+eg01,eg01-v1,Hamming Target,"['static', 'click', 'pattern']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,1.593
+em01,em01-63be02fb,Echo Move,"['static', 'puzzle', '10-grid']",NOT_FINISHED,False,1,5,200,75,0.0,33.33333333333333,0.701
+ec01,ec01-v1,Mirror Echo,"['static', 'planning']",NOT_FINISHED,False,1,5,200,75,0.0,33.33333333333333,0.458
+bn03,bn03-63be02fb,Manhattan Beacon (variant),"['static', 'exploration', 'hidden']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.889
+bn04,bn04-v1,Line Flash,"['hidden', 'click']",NOT_FINISHED,False,3,7,200,75,0.0,35.23289481081689,0.098
+dm01,dm01-63be02fb,Domino Cover,"['static', 'click', 'puzzle']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.155
+bn02,bn02-63be02fb,Manhattan Beacon,"['static', 'exploration', 'hidden']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.85
+dr01,dr01-63be02fb,Drill Rush,"['static', 'puzzle', '10-grid']",WIN,True,5,5,73,75,1.0555451304184653,90.70370370370371,0.164
+dv01,dv01-63be02fb,Divergent Walls,"['static', 'movement', 'timeline']",WIN,True,5,5,73,75,1.0555451304184653,88.8692011526833,0.16
+df04,df04-v1,Diffuse Only,"['simulation', 'field']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,1.654
+ex01,ex01-63be02fb,Exit Hold,"['static', 'puzzle', 'timing']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.576
+dn01,dn01-v1,Donut Wind,"['static', 'topology']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.635
+dm04,dm04-v1,L-Tromino Cover,"['static', 'click', 'tiling']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,0.183
+bd01,bd01-63be02fb,No Revisits,"['static', 'puzzle', 'path']",WIN,True,5,5,48,75,1.15,100.0,0.103
+es01,es01-63be02fb,Escort,"['static', 'movement', 'multi-agent']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.828
+dp01,dp01-v1,Dual Plane,"['static', 'planning']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,1.038
+ck04,ck04-v1,Directed Wire,"['circuit', 'click']",NOT_FINISHED,False,0,7,200,75,0.0,0.0,0.215
+ck03,ck03-63be02fb,Circuit Junction (variant),"['static', 'graph', 'logic']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.229
+eb01,eb01-63be02fb,Escalator Row,"['static', 'movement', '10-grid', 'conveyor']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.535
+dt01,dt01-63be02fb,Detour,"['static', 'puzzle', 'routing']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.373
+ck02,ck02-63be02fb,Circuit Junction,"['static', 'graph', 'logic']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.228
+bi01,bi01-63be02fb,Bishop Courier,"['static', 'movement', '10-grid', 'chess']",NOT_FINISHED,False,2,5,200,75,0.0,50.0,0.677
+ex02,ex02-63be02fb,Exit Hold Sliding,"['static', 'puzzle', 'hold']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.571
+dl01,dl01-63be02fb,Delay Line,"['static', 'puzzle', 'planning']",NOT_FINISHED,False,0,5,200,75,0.0,0.0,0.55
+ep01,ep01-v1,Pain Budget,"['static', 'path']",WIN,True,5,5,74,75,1.0272096420745072,100.0,0.204

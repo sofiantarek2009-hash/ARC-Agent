@@ -1,26 +1,292 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ═══════════════════════════════════════════════
+   NORTHSTAR ENERGY SOLUTIONS — DESIGN TOKENS
+   Codename: "Telemetry & Steel"
+   ═══════════════════════════════════════════════ */
+
+@theme {
+  /* ──────────────────────────────────────
+     COLOR PALETTE ARCHITECTURE
+     Petroleum deep-water darks with
+     high-contrast industrial accents
+  ────────────────────────────────────── */
+
+  /* Primary Backgrounds */
+  --color-petroleum-900: #040D14;
+  --color-charcoal-800: #0D1117;
+  --color-charcoal-700: #161B22;
+  --color-charcoal-600: #21262D;
+
+  /* Accent Colors */
+  --color-neon-cyan: #00F2FE;
+  --color-neon-cyan-dim: #00B4BD;
+  --color-hazard-orange: #FF5722;
+  --color-hazard-orange-dim: #BF360C;
+  --color-volt-lime: #CCFF00;
+
+  /* Surfaces */
+  --color-canvas-void: #0B0C0E;
+  --color-surface-subtle: #14161D;
+  --color-surface-elevated: #1B1E26;
+  --color-border-grid: rgba(255,255,255,0.07);
+
+  /* Typography */
+  --color-steel-400: #8B949E;
+  --color-steel-500: #6E7681;
+  --color-steel-600: #484F58;
+
+  /* Legacy Aliases (backward compat) */
+  --color-void: #040D14;
+  --color-steel: #0D1117;
+  --color-industrial: #FF5722;
+  --color-simulation: #00F2FE;
+
+  /* ──────────────────────────────────────
+     TYPOGRAPHY STACK
+  ────────────────────────────────────── */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-space-grotesk), ui-sans-serif, system-ui;
+  --font-mono: var(--font-geist-mono), 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+
+  /* ──────────────────────────────────────
+     GLOW SHADOWS
+  ────────────────────────────────────── */
+  --shadow-glow-cyan: 0 0 15px rgba(0, 242, 254, 0.4), 0 0 45px rgba(0, 242, 254, 0.1);
+  --shadow-glow-orange: 0 0 15px rgba(255, 87, 34, 0.4), 0 0 45px rgba(255, 87, 34, 0.1);
+  --shadow-glow-cyan-sm: 0 0 8px rgba(0, 242, 254, 0.3);
+  --shadow-glow-orange-sm: 0 0 8px rgba(255, 87, 34, 0.3);
+
+  /* ──────────────────────────────────────
+     SPACING & RADII
+  ────────────────────────────────────── */
+  --radius-panel: 16px;
+  --radius-card: 12px;
+  --radius-button: 8px;
+  /* ──────────────────────────────────────
+     MIL-DESIGN-ENG KOWALSKI EASING
+  ────────────────────────────────────── */
+  --ease-kowalski: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-snappy: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* ═══════════════════════════════════════════════
+   BASE LAYER — Element defaults
+   ═══════════════════════════════════════════════ */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-petroleum-900 text-white font-sans antialiased overflow-x-hidden relative;
+    background-color: var(--color-petroleum-900);
+  }
+
+  /* High-end Film Grain / Noise Overlay (design-taste-frontend) */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.25;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    letter-spacing: -0.04em;
+  }
+
+  h1 {
+    font-size: clamp(3rem, 7vw, 6rem);
+    line-height: 0.95;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: clamp(2rem, 5vw, 4rem);
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+
+  h3 {
+    font-size: clamp(1.25rem, 3vw, 2rem);
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* Monospace for all technical data */
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums slashed-zero;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: var(--color-neon-cyan);
+    color: var(--color-petroleum-900);
+  }
+
+  /* Focus */
+  :focus-visible {
+    outline: 2px solid var(--color-neon-cyan);
+    outline-offset: 2px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ═══════════════════════════════════════════════
+   ═══════════════════════════════════════════════ */
+
+.glass-panel {
+  background: rgba(13, 17, 23, 0.4);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+}
+
+.glass-panel-heavy {
+  background: rgba(4, 13, 20, 0.6);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.glass-hud {
+  background: rgba(13, 17, 23, 0.3);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid rgba(0, 242, 254, 0.15);
+  box-shadow:
+    0 0 15px rgba(0, 242, 254, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-hud-orange {
+  background: rgba(13, 17, 23, 0.3);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid rgba(255, 87, 34, 0.15);
+  box-shadow:
+    0 0 15px rgba(255, 87, 34, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Glow hover states for interactive elements */
+.glow-hover-cyan {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.glow-hover-cyan:hover {
+  box-shadow: var(--shadow-glow-cyan);
+  border-color: rgba(0, 242, 254, 0.3);
+}
+
+.glow-hover-orange {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.glow-hover-orange:hover {
+  box-shadow: var(--shadow-glow-orange);
+  border-color: rgba(255, 87, 34, 0.3);
+}
+
+/* ═══════════════════════════════════════════════
+   SCROLLBAR — Industrial Dark
+   ═══════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-petroleum-900);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-charcoal-600);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neon-cyan);
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ═══════════════════════════════════════════════
+   KEYFRAME ANIMATIONS
+   ═══════════════════════════════════════════════ */
+
+@keyframes scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(calc(-50% - 0.75rem)); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 242, 254, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(0, 242, 254, 0.6); }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+/* ═══════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════ */
+
+/* Monochrome filter for partnership photography */
+.photo-mono {
+  filter: grayscale(100%);
+  transition: filter 0.5s ease;
+}
+.photo-mono:hover {
+  filter: grayscale(0%);
+}
+
+/* ═══════════════════════════════════════════════
+   PREFERS REDUCED MOTION
+   ═══════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════
+   LENIS SMOOTH SCROLL
+   ═══════════════════════════════════════════════ */
+html.lenis, html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.animate-marquee {
+  animation: scroll 40s linear infinite;
 }

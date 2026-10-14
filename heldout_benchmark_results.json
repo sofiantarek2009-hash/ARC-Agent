@@ -1,0 +1,482 @@
+{
+  "total_games": 25,
+  "total_wins": 4,
+  "win_rate_pct": 16.0,
+  "total_levels_cleared": 27,
+  "total_levels_possible": 135,
+  "mean_official_score": 21.258898653354823,
+  "mean_rhae": 0.1715319961164575,
+  "total_bench_time_sec": 15.746456146240234,
+  "games": [
+    {
+      "game_id": "eg01",
+      "full_id": "eg01-v1",
+      "title": "Hamming Target",
+      "tags": [
+        "static",
+        "click",
+        "pattern"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 7,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 1.593
+    },
+    {
+      "game_id": "em01",
+      "full_id": "em01-63be02fb",
+      "title": "Echo Move",
+      "tags": [
+        "static",
+        "puzzle",
+        "10-grid"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 1,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 33.33333333333333,
+      "time_sec": 0.701
+    },
+    {
+      "game_id": "ec01",
+      "full_id": "ec01-v1",
+      "title": "Mirror Echo",
+      "tags": [
+        "static",
+        "planning"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 1,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 33.33333333333333,
+      "time_sec": 0.458
+    },
+    {
+      "game_id": "bn03",
+      "full_id": "bn03-63be02fb",
+      "title": "Manhattan Beacon (variant)",
+      "tags": [
+        "static",
+        "exploration",
+        "hidden"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 1.889
+    },
+    {
+      "game_id": "bn04",
+      "full_id": "bn04-v1",
+      "title": "Line Flash",
+      "tags": [
+        "hidden",
+        "click"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 3,
+      "win_levels": 7,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 35.23289481081689,
+      "time_sec": 0.098
+    },
+    {
+      "game_id": "dm01",
+      "full_id": "dm01-63be02fb",
+      "title": "Domino Cover",
+      "tags": [
+        "static",
+        "click",
+        "puzzle"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.155
+    },
+    {
+      "game_id": "bn02",
+      "full_id": "bn02-63be02fb",
+      "title": "Manhattan Beacon",
+      "tags": [
+        "static",
+        "exploration",
+        "hidden"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 1.85
+    },
+    {
+      "game_id": "dr01",
+      "full_id": "dr01-63be02fb",
+      "title": "Drill Rush",
+      "tags": [
+        "static",
+        "puzzle",
+        "10-grid"
+      ],
+      "state": "WIN",
+      "is_won": true,
+      "levels_completed": 5,
+      "win_levels": 5,
+      "actions": 73,
+      "human_baseline": 75,
+      "rhae_score": 1.0555451304184653,
+      "official_score": 90.70370370370371,
+      "time_sec": 0.164
+    },
+    {
+      "game_id": "dv01",
+      "full_id": "dv01-63be02fb",
+      "title": "Divergent Walls",
+      "tags": [
+        "static",
+        "movement",
+        "timeline"
+      ],
+      "state": "WIN",
+      "is_won": true,
+      "levels_completed": 5,
+      "win_levels": 5,
+      "actions": 73,
+      "human_baseline": 75,
+      "rhae_score": 1.0555451304184653,
+      "official_score": 88.8692011526833,
+      "time_sec": 0.16
+    },
+    {
+      "game_id": "df04",
+      "full_id": "df04-v1",
+      "title": "Diffuse Only",
+      "tags": [
+        "simulation",
+        "field"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 7,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 1.654
+    },
+    {
+      "game_id": "ex01",
+      "full_id": "ex01-63be02fb",
+      "title": "Exit Hold",
+      "tags": [
+        "static",
+        "puzzle",
+        "timing"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.576
+    },
+    {
+      "game_id": "dn01",
+      "full_id": "dn01-v1",
+      "title": "Donut Wind",
+      "tags": [
+        "static",
+        "topology"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.635
+    },
+    {
+      "game_id": "dm04",
+      "full_id": "dm04-v1",
+      "title": "L-Tromino Cover",
+      "tags": [
+        "static",
+        "click",
+        "tiling"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 7,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.183
+    },
+    {
+      "game_id": "bd01",
+      "full_id": "bd01-63be02fb",
+      "title": "No Revisits",
+      "tags": [
+        "static",
+        "puzzle",
+        "path"
+      ],
+      "state": "WIN",
+      "is_won": true,
+      "levels_completed": 5,
+      "win_levels": 5,
+      "actions": 48,
+      "human_baseline": 75,
+      "rhae_score": 1.15,
+      "official_score": 100.0,
+      "time_sec": 0.103
+    },
+    {
+      "game_id": "es01",
+      "full_id": "es01-63be02fb",
+      "title": "Escort",
+      "tags": [
+        "static",
+        "movement",
+        "multi-agent"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.828
+    },
+    {
+      "game_id": "dp01",
+      "full_id": "dp01-v1",
+      "title": "Dual Plane",
+      "tags": [
+        "static",
+        "planning"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 1.038
+    },
+    {
+      "game_id": "ck04",
+      "full_id": "ck04-v1",
+      "title": "Directed Wire",
+      "tags": [
+        "circuit",
+        "click"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 7,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.215
+    },
+    {
+      "game_id": "ck03",
+      "full_id": "ck03-63be02fb",
+      "title": "Circuit Junction (variant)",
+      "tags": [
+        "static",
+        "graph",
+        "logic"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.229
+    },
+    {
+      "game_id": "eb01",
+      "full_id": "eb01-63be02fb",
+      "title": "Escalator Row",
+      "tags": [
+        "static",
+        "movement",
+        "10-grid",
+        "conveyor"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.535
+    },
+    {
+      "game_id": "dt01",
+      "full_id": "dt01-63be02fb",
+      "title": "Detour",
+      "tags": [
+        "static",
+        "puzzle",
+        "routing"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.373
+    },
+    {
+      "game_id": "ck02",
+      "full_id": "ck02-63be02fb",
+      "title": "Circuit Junction",
+      "tags": [
+        "static",
+        "graph",
+        "logic"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.228
+    },
+    {
+      "game_id": "bi01",
+      "full_id": "bi01-63be02fb",
+      "title": "Bishop Courier",
+      "tags": [
+        "static",
+        "movement",
+        "10-grid",
+        "chess"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 2,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 50.0,
+      "time_sec": 0.677
+    },
+    {
+      "game_id": "ex02",
+      "full_id": "ex02-63be02fb",
+      "title": "Exit Hold Sliding",
+      "tags": [
+        "static",
+        "puzzle",
+        "hold"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.571
+    },
+    {
+      "game_id": "dl01",
+      "full_id": "dl01-63be02fb",
+      "title": "Delay Line",
+      "tags": [
+        "static",
+        "puzzle",
+        "planning"
+      ],
+      "state": "NOT_FINISHED",
+      "is_won": false,
+      "levels_completed": 0,
+      "win_levels": 5,
+      "actions": 200,
+      "human_baseline": 75,
+      "rhae_score": 0.0,
+      "official_score": 0.0,
+      "time_sec": 0.55
+    },
+    {
+      "game_id": "ep01",
+      "full_id": "ep01-v1",
+      "title": "Pain Budget",
+      "tags": [
+        "static",
+        "path"
+      ],
+      "state": "WIN",
+      "is_won": true,
+      "levels_completed": 5,
+      "win_levels": 5,
+      "actions": 74,
+      "human_baseline": 75,
+      "rhae_score": 1.0272096420745072,
+      "official_score": 100.0,
+      "time_sec": 0.204
+    }
+  ]
+}

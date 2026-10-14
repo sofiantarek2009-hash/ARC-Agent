@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dad Company — Advanced Industrial Engineering & Simulation</title>
+  <meta name="description" content="Pioneering industrial engineering, advanced drilling simulation, rig inspection, marine services, and competency assurance across the energy sector.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <script src="js/data.js" defer></script>
+  <script src="js/animations.js" defer></script>
+  <script src="js/components.js" defer></script>
+  <script src="js/navigation.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <!-- SECTION 1: Navigation -->
+  <header class="nav">
+    <div class="container flex-center" style="justify-content: space-between; height: 100%;">
+      <div class="nav__logo">
+        <a href="#" style="text-decoration: none; color: inherit;">DAD COMPANY</a>
+      </div>
+      <div class="nav__links">
+        <a href="#technology" class="nav__link" data-section="technology">Technology & Simulation</a>
+        <a href="#engineering" class="nav__link" data-section="engineering">Engineering & Inspection</a>
+        <a href="#human-capital" class="nav__link" data-section="human-capital">Training & Competency</a>
+        <a href="#chemicals" class="nav__link" data-section="chemicals">Industrial Chemicals</a>
+        <span style="width: 1px; height: 16px; background: var(--border-color); margin: auto 8px;"></span>
+        <a href="#accreditations" class="nav__link" data-section="accreditations">Accreditations</a>
+        <a href="#footer" class="nav__link">Contact</a>
+      </div>
+      <button class="nav__hamburger" aria-label="Open Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- SECTION 2: Hero -->
+    <section id="hero" class="hero">
+      <canvas id="hero-canvas" class="hero__canvas"></canvas>
+      <div class="hero__content">
+        <div class="hero__overline">EST. 2016</div>
+        <h1 class="hero__title">Pioneering Industrial Engineering & Advanced Drilling Simulation</h1>
+        <p class="hero__tagline">We integrate the digital frontiers of drilling simulation with physical assurance and industrial engineering.</p>
+        <div class="hero__stats reveal stagger-1">
+          <div>
+            <div class="hero__stat-value">12</div>
+            <div class="hero__stat-label">Global Accreditations</div>
+          </div>
+          <div>
+            <div class="hero__stat-value">4</div>
+            <div class="hero__stat-label">Core Verticals</div>
+          </div>
+          <div>
+            <div class="hero__stat-value">3</div>
+            <div class="hero__stat-label">Regional Hubs</div>
+          </div>
+        </div>
+        <div class="mt-12 flex-center reveal stagger-2" style="gap: 16px;">
+          <a href="#technology" class="btn btn--primary">Explore Capabilities</a>
+          <a href="#footer" class="btn btn--ghost">Contact Us</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: About -->
+    <section id="about" class="section" style="background: var(--bg-secondary);">
+      <div class="container reveal">
+        <div class="section__header" style="max-width: 1000px; text-align: center; margin: 0 auto 4rem;">
+          <div class="section-label" style="justify-content: center;">VISION & MISSION</div>
+          <h2 class="section__title">To set the global benchmark for digitally enabled well operations and industrial inspection.</h2>
+          <p class="section__subtitle" style="max-width: 800px; margin: 0 auto;">Banking on our people as our most important asset, our mission is to provide reliable, innovative solutions that enable our customers to outperform safely. We pioneer the region's simulation technologies while delivering extreme-quality physical engineering assurance.</p>
+        </div>
+        <div class="grid-4 mt-12">
+          <div class="card reveal stagger-1">
+            <h3 class="card__title">Advanced Simulations</h3>
+            <p class="card__desc">Proprietary RDS-100® and WeXplore® platforms deliver globally approved, real-time enabled experiences.</p>
+          </div>
+          <div class="card reveal stagger-2">
+            <h3 class="card__title">International Standards</h3>
+            <p class="card__desc">Absolute adherence to modern global quality standards ensures flawless consistency.</p>
+          </div>
+          <div class="card reveal stagger-3">
+            <h3 class="card__title">Technical Expertise</h3>
+            <p class="card__desc">Exceptional technical history in heavy drilling operations backed by Shell, IWCF, and IADC.</p>
+          </div>
+          <div class="card reveal stagger-4">
+            <h3 class="card__title">Value-for-Money</h3>
+            <p class="card__desc">Optimized supply chains combined with localized manufacturing allow competitive pricing.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: Technology & Simulation -->
+    <section id="technology" class="section">
+      <div class="container">
+        <div class="section__header reveal">
+          <div class="section-label">01. TECHNOLOGY & SIMULATION</div>
+          <h2 class="section__title">Digital Frontiers</h2>
+        </div>
+        
+        <div class="tab-group mt-12 reveal stagger-1" id="technology-tabs">
+          <div class="tab-group__nav" role="tablist">
+            <button class="tab-group__tab tab-group__tab--active" role="tab" aria-selected="true" data-panel="panel-simulators">RDS-100® Simulators</button>
+            <button class="tab-group__tab" role="tab" aria-selected="false" data-panel="panel-vr">WEXPLORE® VR</button>
+            <button class="tab-group__tab" role="tab" aria-selected="false" data-panel="panel-digital">Digital Solutions</button>
+          </div>
+          <div class="tab-group__panel tab-group__panel--active" id="panel-simulators" role="tabpanel">
+            <div class="grid-2">
+              <div class="card">
+                <div class="card__icon">⚙️</div>
+                <h3 class="card__title">Simulators Manufacturing</h3>
+                <p class="card__desc mb-4">High-fidelity drilling and well control simulation built for real operations.</p>
+                <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+                  <li>Seamlessly integrates real-time operational data</li>
+                  <li>Continuous live data plotting</li>
+                  <li>Advanced stuck pipe and motor problem modules</li>
+                  <li>Well control scenario simulation</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div class="tab-group__panel" id="panel-vr" role="tabpanel" hidden>
+            <div class="grid-2">
+              <div class="card">
+                <div class="card__icon">🥽</div>
+                <h3 class="card__title">Virtual Reality</h3>
+                <p class="card__desc mb-4">Immersive, scenario-based environments exposing personnel to critical field risks.</p>
+                <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+                  <li>360-degree experience with full spatial awareness</li>
+                  <li>Direct ecosystem integration with RDS physical simulators</li>
+                  <li>Deeply oriented toward driving organizational HSE culture</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div class="tab-group__panel" id="panel-digital" role="tabpanel" hidden>
+            <div class="grid-2">
+              <div class="card">
+                <div class="card__icon">💻</div>
+                <h3 class="card__title">Digital Solutions</h3>
+                <p class="card__desc mb-4">Driving workflow automation, predictive analytics, and real-time operational insights.</p>
+                <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+                  <li>Advanced workflow automation engines</li>
+                  <li>Intelligent well control and killing software</li>
+                  <li>Live tracking systems built directly for critical well operations</li>
+                  <li>Equipment PMS compliant with API and OEM specifications</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: Engineering & Inspection -->
+    <section id="engineering" class="section" style="background: var(--bg-secondary);">
+      <div class="container">
+        <div class="section__header reveal">
+          <div class="section-label">02. ENGINEERING & INSPECTION</div>
+          <h2 class="section__title">Physical Assurance</h2>
+        </div>
+        
+        <div class="grid-2 mt-8 reveal stagger-1">
+          <div class="card">
+            <h3 class="card__title">Rig & Structural Inspection</h3>
+            <p class="card__desc mb-4">Certified inspections, engineering, and structural integrity assessments.</p>
+            <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+              <li>Certified structural fall protection surveys</li>
+              <li>Heavy Derrick Inspection per API 4G Cat III guidelines</li>
+              <li>Drilling handling tools inspection and top drive inspection per API Cat III / IV</li>
+              <li>High-altitude Rope Access services via IRATA-approved technicians</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="card__title">Offshore & Marine Services</h3>
+            <p class="card__desc mb-4">Comprehensive marine engineering and offshore structural inspection.</p>
+            <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+              <li>Underwater Inspection in Lieu of Drydocking (UWILD)</li>
+              <li>Precision ultrasonic hull gauging per ABS & DNVGL Class rules</li>
+              <li>Complete marine NDT services (MPI/DPI/UT/EMI/VT/ECT)</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="card__title">Lifting Gear & Maintenance</h3>
+            <p class="card__desc mb-4">Equipment supply, maintenance, and heavy logistical support.</p>
+            <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+              <li>Full inspection and certification of high-capacity lifting equipment (LGI)</li>
+              <li>High-specification steel crane wire rope assets</li>
+              <li>Top drive system engineering maintenance and OEM spare parts</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3 class="card__title">Equipment Assessment</h3>
+            <p class="card__desc mb-4">Earthmoving and industrial equipment inspection.</p>
+            <ul style="list-style-position: inside; color: var(--text-secondary); font-size: var(--text-body-sm);">
+              <li>Industrial crane inspection by certified API RP 2D inspectors</li>
+              <li>Industrial heavy forklift inspection regimes</li>
+              <li>Fleet-wide commercial truck HSE safety assessments</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 6: Training & Competency -->
+    <section id="human-capital" class="section">
+      <div class="container">
+        <div class="section__header reveal">
+          <div class="section-label">03. TRAINING & COMPETENCY</div>
+          <h2 class="section__title">Human Capital Development</h2>
+        </div>
+        
+        <div class="grid-2 reveal stagger-1 mt-8">
+          <div>
+            <div class="drawer" id="drawer-cap-1">
+              <button class="drawer__trigger" aria-expanded="false" aria-controls="drawer-cap-content-1">
+                Accredited Training
+                <svg class="drawer__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="drawer__content" id="drawer-cap-content-1">
+                <div class="drawer__inner">
+                  <p>Approved regional center certified by IWCF and IADC.</p>
+                  <ul class="mt-2" style="list-style-position: inside;">
+                    <li>Comprehensive well engineering fundamentals</li>
+                    <li>Hands-on drilling operations training with simulator integration</li>
+                    <li>Specialized well-intervention techniques</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div class="drawer" id="drawer-cap-2">
+              <button class="drawer__trigger" aria-expanded="false" aria-controls="drawer-cap-content-2">
+                Competency Assurance
+                <svg class="drawer__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="drawer__content" id="drawer-cap-content-2">
+                <div class="drawer__inner">
+                  <p>Independent, evidence-based assessment of critical well operations roles.</p>
+                  <ul class="mt-2" style="list-style-position: inside;">
+                    <li>Written and Practical Examinations</li>
+                    <li>On-the-Job Assessment</li>
+                    <li>Technical Interviews</li>
+                    <li>High-stakes simulation-based assessments</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div class="drawer" id="drawer-cap-3">
+              <button class="drawer__trigger" aria-expanded="false" aria-controls="drawer-cap-content-3">
+                Technical Manpower
+                <svg class="drawer__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="drawer__content" id="drawer-cap-content-3">
+                <div class="drawer__inner">
+                  <p>Provision of specialized field personnel.</p>
+                  <ul class="mt-2" style="list-style-position: inside;">
+                    <li>Lifting Coaches & Certified Lifting Inspectors</li>
+                    <li>Riggers & Qualified Welders</li>
+                    <li>Certified API Inspectors & HSE Engineers</li>
+                    <li>Industrial Divers & ALS Professionals</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div class="drawer" id="drawer-cap-4">
+              <button class="drawer__trigger" aria-expanded="false" aria-controls="drawer-cap-content-4">
+                Corporate Consultation
+                <svg class="drawer__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="drawer__content" id="drawer-cap-content-4">
+                <div class="drawer__inner">
+                  <p>High-tier strategic engineering and management support.</p>
+                  <ul class="mt-2" style="list-style-position: inside;">
+                    <li>HSE Performance support systems</li>
+                    <li>Lean Six Sigma methodologies implementation</li>
+                    <li>Complex industrial capital project management</li>
+                    <li>Asset Integrity Management (AIM) solutions</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex-center" style="padding: 2rem;">
+            <!-- Decorative abstract element -->
+            <div style="width: 100%; height: 100%; min-height: 300px; background: radial-gradient(circle at center, hsla(185, 100%, 55%, 0.1), transparent 70%); border-radius: var(--radius-full); border: 1px solid hsla(185, 100%, 55%, 0.2); position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+               <div style="font-size: 4rem; opacity: 0.5;">🧬</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7: Chemicals -->
+    <section id="chemicals" class="section" style="background: var(--bg-secondary);">
+      <div class="container">
+        <div class="section__header reveal">
+          <div class="section-label">04. INDUSTRIAL CHEMICALS</div>
+          <h2 class="section__title">Chemical Supply Division</h2>
+          <p class="section__subtitle">Optimized economic efficiency across chemical treatment formulations, raw industrial elements, and active intermediaries.</p>
+        </div>
+        
+        <div class="chem-browser mt-12 reveal stagger-1">
+          <div class="tab-group__nav" style="border: none;">
+            <button class="pill" style="border-color: var(--accent-primary); color: var(--accent-primary);">Drilling Fluids</button>
+            <button class="pill">Commodity Elements</button>
+            <button class="pill">Petrochemical Materials</button>
+            <button class="pill">Specialty Treatments</button>
+          </div>
+          
+          <div class="grid-4 mt-6">
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Filter Cake Removal</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Fluid Loss Reducers</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">H2S Scavengers</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Downhole Lubricants</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Viscosifiers</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Releasing Agents</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">Surfactants</h4></div>
+            <div class="card" style="padding: 1.5rem;"><h4 class="card__title" style="font-size: 1rem;">H2S Control Systems</h4></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 8: Accreditations -->
+    <section id="accreditations" class="section">
+      <div class="container">
+        <div class="section__header reveal">
+          <div class="section-label">TRUST & COMPLIANCE</div>
+          <h2 class="section__title">Internationally Accredited</h2>
+        </div>
+        
+        <div class="grid-4 mt-8 reveal stagger-1">
+          <div class="pill">Shell</div>
+          <div class="pill">IWCF</div>
+          <div class="pill">IADC</div>
+          <div class="pill">API-7K</div>
+          <div class="pill">ISO</div>
+          <div class="pill">ABS</div>
+          <div class="pill">LEEA</div>
+          <div class="pill">ASNT</div>
+          <div class="pill">DNV-GL</div>
+          <div class="pill">AWS</div>
+          <div class="pill">NACE</div>
+          <div class="pill">LIFT-TEX</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 9: Client Ecosystem -->
+    <section id="clients" class="section" style="overflow: hidden;">
+      <div class="container">
+        <div class="section__header reveal" style="text-align: center; margin: 0 auto 4rem; max-width: 1000px;">
+          <div class="section-label" style="justify-content: center;">TRUSTED BY INDUSTRY LEADERS</div>
+          <h2 class="section__title">Our Client Ecosystem</h2>
+        </div>
+        
+        <div class="client-wall reveal stagger-1 mt-8">
+          <div class="client-wall__track">
+            <!-- Double output for infinite seamless scrolling -->
+            <span class="client-wall__logo">BAPETCO</span>
+            <span class="client-wall__logo">Enppi</span>
+            <span class="client-wall__logo">Cheiron</span>
+            <span class="client-wall__logo">Halliburton</span>
+            <span class="client-wall__logo">Nabors</span>
+            <span class="client-wall__logo">Oxy</span>
+            <span class="client-wall__logo">Weatherford</span>
+            <span class="client-wall__logo">Schlumberger</span>
+            <span class="client-wall__logo">Saipem</span>
+            
+            <span class="client-wall__logo">BAPETCO</span>
+            <span class="client-wall__logo">Enppi</span>
+            <span class="client-wall__logo">Cheiron</span>
+            <span class="client-wall__logo">Halliburton</span>
+            <span class="client-wall__logo">Nabors</span>
+            <span class="client-wall__logo">Oxy</span>
+            <span class="client-wall__logo">Weatherford</span>
+            <span class="client-wall__logo">Schlumberger</span>
+            <span class="client-wall__logo">Saipem</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- SECTION 10: Footer -->
+  <footer id="footer" class="footer">
+    <div class="container">
+      <div class="footer__grid">
+        <div>
+          <div class="footer__brand-name">DAD COMPANY</div>
+          <p class="footer__brand-desc">Pioneering industrial engineering, advanced drilling simulation, rig inspection, marine services, and competency assurance across the energy sector.</p>
+          <div class="mt-8 text-secondary" style="font-size: var(--text-body-sm);">
+            <p>Building 5027, Block 5, Meraj, Maadi, Cairo, Egypt</p>
+            <p class="mt-2">+20-0220826046 | +20-1070787297</p>
+            <p class="mt-2"><a href="mailto:info@dadcompany.com">info@dadcompany.com</a></p>
+          </div>
+        </div>
+        <div>
+          <div class="footer__col-title">Services</div>
+          <a href="#technology" class="footer__link">Technology & Simulation</a>
+          <a href="#engineering" class="footer__link">Engineering & Inspection</a>
+          <a href="#human-capital" class="footer__link">Training & Competency</a>
+          <a href="#chemicals" class="footer__link">Industrial Chemicals</a>
+        </div>
+        <div>
+          <div class="footer__col-title">Hubs</div>
+          <span class="footer__link">Egypt (HQ)</span>
+          <span class="footer__link">Oman</span>
+          <span class="footer__link">Libya</span>
+        </div>
+      </div>
+      <div class="footer__legal">
+        <span>&copy; 2026 Dad Company. All rights reserved.</span>
+        <div style="display: flex; gap: 16px;">
+          <a href="#" style="color: inherit; text-decoration: none;">Privacy Policy</a>
+          <a href="#" style="color: inherit; text-decoration: none;">Terms of Service</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Mobile Menu Dialog -->
+  <dialog id="mobile-menu" class="nav__mobile-menu" style="width: 100vw; height: 100vh; background: var(--bg-primary); color: var(--text-primary); border: none; padding: 2rem;">
+    <div style="display: flex; justify-content: flex-end;">
+      <button onclick="document.getElementById('mobile-menu').close()" style="background: none; border: none; color: white; cursor: pointer; padding: 1rem;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 2rem; margin-top: 2rem; font-size: 1.5rem;">
+      <a href="#technology" class="nav__link" onclick="document.getElementById('mobile-menu').close()">Technology & Simulation</a>
+      <a href="#engineering" class="nav__link" onclick="document.getElementById('mobile-menu').close()">Engineering & Inspection</a>
+      <a href="#human-capital" class="nav__link" onclick="document.getElementById('mobile-menu').close()">Training & Competency</a>
+      <a href="#chemicals" class="nav__link" onclick="document.getElementById('mobile-menu').close()">Industrial Chemicals</a>
+      <a href="#footer" class="nav__link" onclick="document.getElementById('mobile-menu').close()">Contact</a>
+    </div>
+  </dialog>
+
+</body>
+</html>
