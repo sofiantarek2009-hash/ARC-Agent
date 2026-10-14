@@ -1,0 +1,28 @@
+[project]
+name = "arc-interactive"
+version = "0.1.0"
+description = "ARC-AGI-3 games collection"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "arc-agi",
+    "arcengine",
+    "numpy>=2.4.3",
+    "pygame>=2.5",
+    "kaggle-benchmarks>=0.2.0",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.9"]
+
+[tool.uv.sources]
+arc-agi = { git = "https://github.com/arcprize/arc-agi.git" }
+arcengine = { git = "https://github.com/arcprize/ARCEngine.git" }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["scripts", "benchmarks/kaggle/notebooks"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
