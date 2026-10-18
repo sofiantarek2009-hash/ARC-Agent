@@ -21,7 +21,7 @@ import numpy as np
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = CURRENT_DIR
 PROJECT_DIR = os.path.join(CURRENT_DIR, "project_override")
-for p in [CURRENT_DIR, PARENT_DIR, PROJECT_DIR]:
+for p in [CURRENT_DIR, PARENT_DIR, PROJECT_DIR, "/kaggle/working", "/tmp"]:
     if p not in sys.path:
         sys.path.insert(0, p)
 

@@ -184,6 +184,16 @@ class OfflineLLMRuntime:
         for p in self.CANDIDATE_MODEL_PATHS:
             if p and os.path.exists(p):
                 return p
+        # Dynamically scan /kaggle/input for mounted model instances
+        if os.path.exists("/kaggle/input"):
+            for root, dirs, files in os.walk("/kaggle/input"):
+                if "config.json" in files:
+                    lower = root.lower()
+                    if "32b" in lower or "qwen" in lower:
+                        return root
+                for f in files:
+                    if f.endswith(".gguf") and ("32b" in f.lower() or "qwen" in f.lower()):
+                        return root
         return explicit_path
 
     @staticmethod
@@ -223,51 +233,75 @@ class OfflineLLMRuntime:
 
                 # High-VRAM single GPU (RTX 6000, A100 >= 36 GB VRAM)
                 if vram_gb >= 36.0:
-                    from vllm import LLM
-                    quant = "awq" if "awq" in m_path_lower else ("fp8" if "fp8" in m_path_lower else None)
-                    self.engine = LLM(
-                        model=self.model_input_dir,
-                        quantization=quant,
-                        kv_cache_dtype="fp8" if quant == "fp8" else "auto",
-                        enable_prefix_caching=True,
-                        max_model_len=4096,
-                        gpu_memory_utilization=0.90,
-                        enforce_eager=False,
-                        trust_remote_code=True,
-                    )
-                    self.backend_type = f"VLLM_RTX6000_{quant.upper() if quant else 'BF16'}"
-                    return
+                    try:
+                        from vllm import LLM
+                        quant = "awq" if "awq" in m_path_lower else ("fp8" if "fp8" in m_path_lower else None)
+                        self.engine = LLM(
+                            model=self.model_input_dir,
+                            quantization=quant,
+                            kv_cache_dtype="fp8" if quant == "fp8" else "auto",
+                            enable_prefix_caching=True,
+                            max_model_len=4096,
+                            gpu_memory_utilization=0.90,
+                            enforce_eager=False,
+                            trust_remote_code=True,
+                        )
+                        self.backend_type = f"VLLM_RTX6000_{quant.upper() if quant else 'BF16'}"
+                        return
+                    except Exception:
+                        pass
 
                 # Dual T4 GPUs (2x16 GB = 32 GB VRAM)
                 elif num_gpus >= 2:
                     gguf_files = [f for f in os.listdir(self.model_input_dir) if f.endswith(".gguf")]
                     if gguf_files:
-                        from llama_cpp import Llama
-                        self.engine = Llama(
-                            model_path=os.path.join(self.model_input_dir, gguf_files[0]),
-                            n_gpu_layers=99,
-                            split_mode=1,
-                            tensor_split=[0.5, 0.5],
-                            n_ctx=4096,
-                            use_mmap=True,
-                            verbose=False,
-                        )
-                        self.backend_type = "LLAMACPP_DUAL_T4_GGUF"
-                        return
+                        try:
+                            from llama_cpp import Llama
+                            self.engine = Llama(
+                                model_path=os.path.join(self.model_input_dir, gguf_files[0]),
+                                n_gpu_layers=99,
+                                split_mode=1,
+                                tensor_split=[0.5, 0.5],
+                                n_ctx=4096,
+                                use_mmap=True,
+                                verbose=False,
+                            )
+                            self.backend_type = "LLAMACPP_DUAL_T4_GGUF"
+                            return
+                        except Exception:
+                            pass
                     else:
-                        from vllm import LLM
-                        quant = "awq" if "awq" in m_path_lower else ("fp8" if "fp8" in m_path_lower else None)
-                        self.engine = LLM(
-                            model=self.model_input_dir,
-                            tensor_parallel_size=2,
-                            quantization=quant,
-                            max_model_len=4096,
-                            gpu_memory_utilization=0.88,
-                            enforce_eager=False,
-                            trust_remote_code=True,
-                        )
-                        self.backend_type = f"VLLM_DUAL_T4_{quant.upper() if quant else 'AUTO'}"
-                        return
+                        try:
+                            from vllm import LLM
+                            quant = "awq" if "awq" in m_path_lower else ("fp8" if "fp8" in m_path_lower else None)
+                            self.engine = LLM(
+                                model=self.model_input_dir,
+                                tensor_parallel_size=2,
+                                quantization=quant,
+                                max_model_len=4096,
+                                gpu_memory_utilization=0.88,
+                                enforce_eager=False,
+                                trust_remote_code=True,
+                            )
+                            self.backend_type = f"VLLM_DUAL_T4_{quant.upper() if quant else 'AUTO'}"
+                            return
+                        except Exception:
+                            pass
+
+                # Native Transformers CUDA loader (Works on both RTX 6000 and Dual T4 with auto device_map)
+                try:
+                    from transformers import AutoModelForCausalLM, AutoTokenizer
+                    self.tokenizer = AutoTokenizer.from_pretrained(self.model_input_dir, trust_remote_code=True)
+                    self.engine = AutoModelForCausalLM.from_pretrained(
+                        self.model_input_dir,
+                        torch_dtype="auto",
+                        device_map="auto",
+                        trust_remote_code=True,
+                    )
+                    self.backend_type = "TRANSFORMERS_CUDA_32B"
+                    return
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -353,10 +387,15 @@ class OfflineLLMRuntime:
             return ""
 
     def _call_transformers_7b(self, prompt: str, attempt_idx: int = 0) -> str:
-        """In-process inference using PyTorch / MPS Transformers."""
+        """In-process inference using PyTorch / MPS / CUDA Transformers."""
         try:
             import torch
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.engine.device)
+            target_device = (
+                "cuda:0"
+                if torch.cuda.is_available()
+                else getattr(self.engine, "device", "cpu")
+            )
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(target_device)
             with torch.no_grad():
                 outputs = self.engine.generate(
                     **inputs,

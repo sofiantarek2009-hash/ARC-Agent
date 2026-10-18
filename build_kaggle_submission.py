@@ -158,7 +158,7 @@ def build_notebook() -> dict:
         }
         ''')
 
-            # 6. Configure sidecar connection
+            # 6. Configure sidecar connection & 32B model flags
             with open('/kaggle/working/ARC-AGI-3-Agents/.env', 'w') as f:
                 f.write('''SCHEME=http
         HOST=gateway
@@ -168,6 +168,7 @@ def build_notebook() -> dict:
         OPERATION_MODE=online
         ENVIRONMENTS_DIR=
         RECORDINGS_DIR=/kaggle/working/server_recording
+        ARC_MODEL_SIZE=32B
         ''')
 
             # 7. Execute official evaluation loop
@@ -242,6 +243,7 @@ def build_notebook() -> dict:
 
 
 def sync_kernel_metadata() -> None:
+    model_src = ["qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1"]
     if not METADATA_PATH.exists():
         METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
         meta = {
@@ -258,7 +260,7 @@ def sync_kernel_metadata() -> None:
             "dataset_sources": [],
             "kernel_sources": [],
             "competition_sources": ["arc-prize-2026-arc-agi-3"],
-            "model_sources": [],
+            "model_sources": model_src,
         }
         METADATA_PATH.write_text(json.dumps(meta, indent=2) + "\n")
         print(f"[METADATA] Initialized {METADATA_PATH.relative_to(ROOT)}")
@@ -269,8 +271,9 @@ def sync_kernel_metadata() -> None:
         meta["code_file"] = "submission.ipynb"
         meta["kernel_type"] = "notebook"
         meta["enable_internet"] = False
+        meta["model_sources"] = model_src
         METADATA_PATH.write_text(json.dumps(meta, indent=2) + "\n")
-        print(f"[METADATA] Synchronized {METADATA_PATH.relative_to(ROOT)} with ID: {meta['id']}")
+        print(f"[METADATA] Synchronized {METADATA_PATH.relative_to(ROOT)} with ID: {meta['id']} and Model: {model_src}")
 
 
 def generate_single_cell_script(payload_b64: str) -> None:
