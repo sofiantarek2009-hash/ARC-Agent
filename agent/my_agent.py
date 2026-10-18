@@ -86,6 +86,13 @@ try:
 except ImportError:
     class Agent:
         """Abstract base class matching ARC-AGI-3 Agents framework."""
+        MAX_ACTIONS: int = 200
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.game_id = kwargs.get("game_id", "default_game")
+            self.card_id = kwargs.get("card_id", "test_card")
+            self.action_counter = 0
+            self.frames = []
+
         def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
             raise NotImplementedError
 
@@ -104,40 +111,43 @@ class MyAgent(Agent):
     Subclasses official `Agent` to integrate into ARC-AGI-3-Kaggle-Starter.
     """
 
+    MAX_ACTIONS: int = 200
+
     def __init__(
         self,
+        *args: Any,
         total_budget: float = 32400.0,
         total_games: int = 135,
         max_level_timeout: float = 35.0,
+        **kwargs: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(*args, **kwargs)
         self.orchestration_agent = ProjectOverrideAgent(
             total_budget=total_budget,
             total_games=total_games,
             max_level_timeout=max_level_timeout,
         )
-        self.current_game_id: Optional[str] = None
+        self.current_game_id: Optional[str] = getattr(self, "game_id", None)
         self.last_level_index: int = 0
         self.actions_in_current_level: int = 0
         self.level_actions_history: List[int] = []
+        if self.current_game_id:
+            self.orchestration_agent.start_new_game(self.current_game_id)
 
     def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
-        """Determines when the agent has completed the current game/level."""
+        """Determines when the agent has completed the current game."""
         if latest_frame is None:
             return True
         # Check if the environment has reached WIN state
-        state_str = str(getattr(latest_frame, "state", "")).upper()
-        if "WIN" in state_str or latest_frame.state is getattr(GameState, "WIN", "WIN"):
+        state = getattr(latest_frame, "state", None)
+        state_str = str(state).upper()
+        if "WIN" in state_str or state is getattr(GameState, "WIN", None):
             return True
 
         # Check if levels completed reached target win levels
         completed = getattr(latest_frame, "levels_completed", 0)
         target = getattr(latest_frame, "win_levels", 1)
-        if target is not None and completed >= target:
-            return True
-
-        # System budget watchdog check
-        if self.orchestration_agent.pacer.is_level_timed_out:
+        if target is not None and target > 0 and completed >= target:
             return True
 
         return False
