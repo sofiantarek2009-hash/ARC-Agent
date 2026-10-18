@@ -42,6 +42,10 @@ elif [ -s "ARC-AGI-3-Kaggle-Starter/.kaggle/access_token" ]; then
     export KAGGLE_API_TOKEN="$(cat ARC-AGI-3-Kaggle-Starter/.kaggle/access_token | tr -d '\r\n')"
     AUTH_FOUND=1
     echo "🔑 Found API token in ARC-AGI-3-Kaggle-Starter/.kaggle/access_token"
+elif [ -s "$HOME/.kaggle/access_token" ]; then
+    export KAGGLE_API_TOKEN="$(cat "$HOME/.kaggle/access_token" | tr -d '\r\n')"
+    AUTH_FOUND=1
+    echo "🔑 Found API token in ~/.kaggle/access_token"
 elif [ -n "$KAGGLE_API_TOKEN" ]; then
     AUTH_FOUND=1
     echo "🔑 Using KAGGLE_API_TOKEN from environment"

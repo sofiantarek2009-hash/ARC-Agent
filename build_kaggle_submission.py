@@ -245,8 +245,8 @@ def sync_kernel_metadata() -> None:
     if not METADATA_PATH.exists():
         METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
         meta = {
-            "id": "sofiantarek2009/arc-prize-2026-arc-agi-3-agent",
-            "title": "ARC Prize 2026 — ARC-AGI-3 Agent",
+            "id": "sofianali188201/arc-prize-2026-arc-agi-3-starter",
+            "title": "ARC Prize 2026 — ARC-AGI-3 Starter",
             "code_file": "submission.ipynb",
             "language": "python",
             "kernel_type": "notebook",
@@ -264,9 +264,7 @@ def sync_kernel_metadata() -> None:
         print(f"[METADATA] Initialized {METADATA_PATH.relative_to(ROOT)}")
     else:
         meta = json.loads(METADATA_PATH.read_text())
-        # Replace default placeholder if present
-        if "REPLACE_WITH_YOUR_USERNAME" in meta.get("id", ""):
-            meta["id"] = meta["id"].replace("REPLACE_WITH_YOUR_USERNAME", "sofiantarek2009")
+        meta["id"] = "sofianali188201/arc-prize-2026-arc-agi-3-starter"
         meta["enable_gpu"] = _ACCELERATORS[ACCELERATOR]["gpu"]
         meta["code_file"] = "submission.ipynb"
         meta["kernel_type"] = "notebook"
