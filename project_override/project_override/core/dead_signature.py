@@ -141,13 +141,74 @@ def unpack_signature(sig: int) -> ActionSignature:
     return ActionSignature.from_uint64(sig)
 
 
+def is_perimeter_timer_tick(
+    prev_grid: np.ndarray,
+    curr_grid: np.ndarray,
+    border_margin: int = 4,
+) -> bool:
+    """Detects if a transition was caused purely by an autonomous perimeter timer tick.
+
+    Returns True if:
+    1. Interior grid [margin : H - margin, margin : W - margin] is completely unchanged.
+    2. Any differences between prev and curr are <= 4 pixels and strictly within the border margin.
+    """
+    if prev_grid.shape != curr_grid.shape:
+        return False
+    h, w = prev_grid.shape[:2]
+    bm = border_margin
+    if h <= 2 * bm or w <= 2 * bm:
+        return False
+
+    # Check interior identity
+    interior_prev = prev_grid[bm : h - bm, bm : w - bm]
+    interior_curr = curr_grid[bm : h - bm, bm : w - bm]
+    if not np.array_equal(interior_prev, interior_curr):
+        return False
+
+    # Check full delta
+    diff_mask = (prev_grid != curr_grid)
+    diff_count = int(np.sum(diff_mask))
+    if diff_count == 0:
+        return False  # No change at all, not a timer tick
+    if diff_count > 4:
+        return False  # Too many changes to be a simple timer tick
+
+    # Verify all diffs lie in the outer perimeter
+    diff_pts = np.argwhere(diff_mask)
+    for r, c in diff_pts:
+        in_margin = (r < bm) or (r >= h - bm) or (c < bm) or (c >= w - bm)
+        if not in_margin:
+            return False
+
+    return True
+
+
+def mask_perimeter_timer_pixels(
+    grid: np.ndarray,
+    border_margin: int = 4,
+) -> np.ndarray:
+    """Returns a copy of grid with outer perimeter margins masked to 0."""
+    arr = np.asarray(grid, dtype=np.int32).copy()
+    h, w = arr.shape[:2]
+    bm = border_margin
+    if h > 2 * bm and w > 2 * bm:
+        arr[:bm, :] = 0
+        arr[h - bm :, :] = 0
+        arr[:, :bm] = 0
+        arr[:, w - bm :] = 0
+    return arr
+
+
 def compute_context_hash(
     grid: np.ndarray,
     roi: Optional[Tuple[int, int, int, int]] = None,
+    mask_perimeter: bool = False,
+    border_margin: int = 4,
 ) -> int:
     """Computes a 32-bit context hash for a grid state or region of interest (ROI).
 
     Uses fast CRC32 checksum over the byte buffer, masked to 32 bits.
+    When mask_perimeter=True, outer border margin pixels (countdown timers) are masked out.
     """
     arr = np.asarray(grid, dtype=np.int32)
     if roi is not None:
@@ -158,6 +219,8 @@ def compute_context_hash(
         c0 = max(0, min(w, c0))
         c1 = max(c0, min(w, c1))
         sub = arr[r0:r1, c0:c1]
+    elif mask_perimeter:
+        sub = mask_perimeter_timer_pixels(arr, border_margin=border_margin)
     else:
         sub = arr
 

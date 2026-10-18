@@ -118,7 +118,62 @@ __all__ = [
     "AutomataClass",
     "SpriteEntity",
     "InterceptSolution",
+    # Universal Semantic Delta & World Model Engine
+    "FunctionalRole",
+    "KinematicModality",
+    "EntityState",
+    "FrameDelta",
+    "VerificationReport",
+    "ArenaBackgroundSeparator",
+    "UniversalSemanticDeltaEngine",
+    "ActionPipelineTracker",
+    "InertiaDynamicsTracker",
+    "WorldModelTransitionGraph",
+    # Delta-Driven Goal Induction Engine
+    "GoalCategory",
+    "HypothesisStatus",
+    "GoalHypothesis",
+    "GoalGuidance",
+    "CausalWinInvariant",
+    "SolvedLevelMemory",
+    "DeltaGoalInductionEngine",
+    # Simulated Model Planner & Verification Delta
+    "SimulatedAction",
+    "SimulatedState",
+    "DeadlockDetector",
+    "KinematicTransitionModel",
+    "EpistemicProbePlan",
+    "ProbeOutcome",
+    "EpistemicProber",
+    "VerificationDeltaReport",
+    "VerificationDeltaController",
+    "SimulatedModelPlanner",
+    "UniversalGF2LinearSolver",
+    "UniversalBooleanSATSolver",
+    "UniversalIndependentSetSolver",
+    "InteractiveMatrixInducer",
+    "PassiveVelocityField",
+    "solve_conveyor_astar",
+    "OnlineWorldModelSynthesizer",
+    "MultiStrideKinematicsSimulator",
 ]
+
+from project_override.core.combinatorial_engine import (
+    UniversalGF2LinearSolver,
+    UniversalBooleanSATSolver,
+    UniversalIndependentSetSolver,
+    InteractiveMatrixInducer,
+)
+
+from project_override.core.passive_conveyor_engine import (
+    PassiveVelocityField,
+    solve_conveyor_astar,
+)
+
+from project_override.core.online_world_model_synthesizer import (
+    OnlineWorldModelSynthesizer,
+    MultiStrideKinematicsSimulator,
+)
 
 from project_override.core.astar_navigation import (
     AStarNavigator,
@@ -139,3 +194,49 @@ from project_override.core.dpa_physics_predictor import (
     SpriteEntity,
     InterceptSolution,
 )
+
+from project_override.core.world_model_engine import (
+    FunctionalRole,
+    KinematicModality,
+    EntityState,
+    FrameDelta,
+    VerificationReport,
+    ArenaBackgroundSeparator,
+    UniversalSemanticDeltaEngine,
+    ActionPipelineTracker,
+    InertiaDynamicsTracker,
+    WorldModelTransitionGraph,
+)
+
+from project_override.core.goal_induction_engine import (
+    GoalCategory,
+    HypothesisStatus,
+    GoalHypothesis,
+    GoalGuidance,
+    CausalWinInvariant,
+    SolvedLevelMemory,
+    DeltaGoalInductionEngine,
+)
+
+from project_override.core.combinatorial_engine import (
+    UniversalGF2LinearSolver,
+    UniversalBooleanSATSolver,
+    UniversalIndependentSetSolver,
+    InteractiveMatrixInducer,
+    SatisfactionBarInfo,
+    UniversalSatisfactionBarDetector,
+    UniversalSATClauseSolver,
+    UniversalSubmitButtonDetector,
+    UniversalOptionSelectorEngine,
+)
+
+from project_override.core.passive_conveyor_engine import (
+    PassiveVelocityField,
+    solve_conveyor_astar,
+)
+
+from project_override.core.online_world_model_synthesizer import (
+    OnlineWorldModelSynthesizer,
+    MultiStrideKinematicsSimulator,
+)
+

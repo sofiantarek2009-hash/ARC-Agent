@@ -39,3 +39,41 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# ARC-AGI & Temporary Logs / Benchmarks
+*.log
+*.zip
+recordings/
+server_recording/
+benchmark_results.csv
+benchmark_results.json
+baseline_benchmark_results.json
+heldout_benchmark_results.csv
+heldout_benchmark_results.json
+public_benchmark_results.csv
+public_benchmark_results.json
+heldout_benchmark_*.csv
+heldout_baseline.json
+test_heldout_sample.csv
+verify_restoration.csv
+submission.parquet
+
+# Egg info
+*.egg-info/
+
+# Kaggle credentials
+.kaggle/
+

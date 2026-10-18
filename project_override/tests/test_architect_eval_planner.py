@@ -402,6 +402,44 @@ class TestDeadSignatureAndMCTS(unittest.TestCase):
         self.assertGreater(result.actions_executed, 0)
         self.assertTrue(queue.is_empty)
 
+    # -----------------------------------------------------------------
+    # 9. Hierarchical Subgoal DAG Planner Tests
+    # -----------------------------------------------------------------
+    def test_hierarchical_subgoal_planner_multi_item(self):
+        """Test hierarchical DAG decomposition across multiple collectible targets."""
+        from project_override.core.simulated_planner import (
+            SimulatedState,
+            KinematicTransitionModel,
+            HierarchicalSubgoalPlanner,
+        )
+
+        init_state = SimulatedState(player_pos=(0, 0))
+        model = KinematicTransitionModel(
+            grid_h=10,
+            grid_w=10,
+            walls=set(),
+            displacement_vectors={1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)},
+            collectibles={(0, 3), (3, 3), (3, 0)},
+        )
+
+        planner = HierarchicalSubgoalPlanner()
+        milestones = planner.decompose_subgoals(init_state, model)
+        self.assertEqual(len(milestones), 3)
+        self.assertEqual(milestones[0].target_pos, (0, 3))
+
+        plan = planner.plan_hierarchical(init_state, model)
+        self.assertIsNotNone(plan)
+        self.assertGreater(len(plan), 0)
+
+        # Simulate plan execution
+        curr = init_state
+        for act in plan:
+            curr, _, _ = model.simulate_step(curr, act)
+            self.assertIsNotNone(curr)
+
+        self.assertEqual(curr.collected_items, {(0, 3), (3, 3), (3, 0)})
+
 
 if __name__ == "__main__":
     unittest.main()
+

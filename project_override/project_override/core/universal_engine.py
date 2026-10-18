@@ -66,12 +66,14 @@ def fast_grid_hash(grid: np.ndarray) -> int:
 class KinematicProfile:
     """Empirical kinematic characteristics induced from initial action probes."""
     avatar_color: Optional[int] = None
+    co_avatar_colors: Set[int] = field(default_factory=set)
     avatar_size: Tuple[int, int] = (1, 1)
     displacement_vectors: Dict[int, Tuple[int, int]] = field(default_factory=dict)
     modality: str = "NAV"  # 'NAV', 'SLIDE', 'KNIGHT', 'SOKOBAN', 'CLICK'
     is_sliding: bool = False
     is_deterministic: bool = True
     probed: bool = False
+    trail_colors: Set[int] = field(default_factory=set)
 
 
 class DynamicKinematicProber:
@@ -106,7 +108,37 @@ class DynamicKinematicProber:
             self.f0_grid = grid.copy()
             self.current_probe_idx = 0
             self.probe_step = 1
-            return valid_candidates[0]
+
+            ordered_candidates = list(self.candidate_actions)
+            try:
+                sep = separate_background_and_lattice(grid)
+                bg = sep.bg_color
+                interior = grid[sep.y_min:sep.y_max, sep.x_min:sep.x_max]
+                non_bg_colors = [c for c in np.unique(interior) if c != bg and c not in sep.frame_colors]
+                if len(non_bg_colors) >= 2:
+                    comp_centroids = []
+                    for c in non_bg_colors:
+                        pts = np.argwhere((grid == c) & (np.arange(grid.shape[0])[:, None] >= sep.y_min) & (np.arange(grid.shape[0])[:, None] < sep.y_max))
+                        if 1 <= len(pts) <= 400:
+                            comp_centroids.append((float(pts[:, 0].mean()), float(pts[:, 1].mean())))
+                    if len(comp_centroids) >= 2:
+                        comp_centroids.sort(key=lambda x: (x[0], x[1]))
+                        dr = comp_centroids[1][0] - comp_centroids[0][0]
+                        dc = comp_centroids[1][1] - comp_centroids[0][1]
+                        if abs(dc) > 2 * abs(dr) and dc > 0 and 4 in legal_actions:
+                            ordered_candidates = [4, 2, 1, 3]
+                        elif abs(dc) > 2 * abs(dr) and dc < 0 and 3 in legal_actions:
+                            ordered_candidates = [3, 2, 1, 4]
+                        elif abs(dr) > 2 * abs(dc) and dr > 0 and 2 in legal_actions:
+                            ordered_candidates = [2, 4, 1, 3]
+                        elif abs(dr) > 2 * abs(dc) and dr < 0 and 1 in legal_actions:
+                            ordered_candidates = [1, 4, 2, 3]
+            except Exception:
+                pass
+
+            self.candidate_actions = ordered_candidates
+            valid_candidates = [a for a in self.candidate_actions if a in legal_actions]
+            return valid_candidates[0] if valid_candidates else None
 
         if self.probe_step == 1:
             diff = self.f0_grid[4:60, 4:60] != grid[4:60, 4:60]
@@ -116,36 +148,93 @@ class DynamicKinematicProber:
                 c0_colors = set(self.f0_grid[4:60, 4:60][diff])
                 c1_colors = set(grid[4:60, 4:60][diff])
                 bg_0 = collections.Counter(self.f0_grid[4:60, 4:60].flatten()).most_common(1)[0][0]
-                candidates = [c for c in (c0_colors & c1_colors) if c != bg_0 and c != 4]
+                candidates = [c for c in (c0_colors & c1_colors) if c != bg_0]
                 if not candidates:
-                    candidates = [c for c in c0_colors if c != bg_0 and c != 4]
+                    candidates = [c for c in c0_colors if c != bg_0]
                 if not candidates:
-                    candidates = [c for c in c1_colors if c != bg_0 and c != 4]
+                    candidates = [c for c in c1_colors if c != bg_0]
 
                 if candidates:
+                    # Filter candidates: a controllable avatar is a compact entity: mass <= 49 pixels
+                    compact_candidates = [
+                        c for c in candidates
+                        if 1 <= int(np.sum(grid[4:60, 4:60] == c)) <= 49
+                    ]
+                    if compact_candidates:
+                        candidates = compact_candidates
+
+                    # Probe action direction:
+                    probe_act = valid_candidates[self.current_probe_idx]
+                    expected_dr, expected_dc = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}.get(probe_act, (0, 0))
+
+                    # Score each candidate by how well its centroid translation aligns with the probe action
+                    def candidate_score(c: int) -> float:
+                        diff_full = (self.f0_grid != grid)
+                        p0 = np.argwhere((self.f0_grid == c) & diff_full)
+                        p1 = np.argwhere((grid == c) & diff_full)
+                        if len(p0) == 0 or len(p1) == 0:
+                            p0 = np.argwhere(self.f0_grid == c)
+                            p1 = np.argwhere(grid == c)
+                        if len(p0) == 0 or len(p1) == 0:
+                            return -999.0
+                        dr = float(p1[:, 0].mean() - p0[:, 0].mean())
+                        dc = float(p1[:, 1].mean() - p0[:, 1].mean())
+                        alignment = dr * expected_dr + dc * expected_dc
+                        mass_penalty = len(p1) * 0.05
+                        return alignment - mass_penalty
+
+                    candidates.sort(key=candidate_score, reverse=True)
                     av_c = int(candidates[0])
                     self.profile.avatar_color = av_c
+                    self.profile.co_avatar_colors = {int(c) for c in candidates if candidate_score(c) > 0}
 
-                    p0 = np.argwhere((self.f0_grid == av_c) & (np.arange(64)[:, None] >= 4))
-                    p1 = np.argwhere((grid == av_c) & (np.arange(64)[:, None] >= 4))
+                    diff_full = (self.f0_grid != grid)
+                    p0 = np.argwhere((self.f0_grid == av_c) & diff_full)
+                    p1 = np.argwhere((grid == av_c) & diff_full)
+                    if len(p0) == 0 or len(p1) == 0:
+                        p0 = np.argwhere(self.f0_grid == av_c)
+                        p1 = np.argwhere(grid == av_c)
 
                     if len(p0) > 0 and len(p1) > 0:
+                        vacated_c = set(grid[p0[:, 0], p0[:, 1]]) - {bg_0}
+                        if vacated_c:
+                            self.profile.trail_colors = {int(c) for c in vacated_c}
                         dr = int(round(p1[:, 0].mean() - p0[:, 0].mean()))
                         dc = int(round(p1[:, 1].mean() - p0[:, 1].mean()))
+                        h_sprite = int(p0[:, 0].max() - p0[:, 0].min() + 1)
+                        w_sprite = int(p0[:, 1].max() - p0[:, 1].min() + 1)
+                        sprite_dim = max(1, max(h_sprite, w_sprite))
                         step_size = max(1, max(abs(dr), abs(dc)))
-                        self.profile.avatar_size = (step_size, step_size)
+                        self.profile.avatar_size = (sprite_dim, sprite_dim)
 
                         if dr != 0 and dc == 0:
                             self.profile.displacement_vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
-                            if abs(dr) > 8:
+                            if abs(dr) >= 2 * sprite_dim:
                                 self.profile.is_sliding = True
                                 self.profile.modality = "SLIDE"
                             else:
                                 self.profile.modality = "NAV"
-                        elif abs(abs(dr) - abs(dc)) <= 1 and min(abs(dr), abs(dc)) >= 2:
-                            self.profile.displacement_vectors = {1: (-1, -1), 2: (-1, 1), 3: (1, -1), 4: (1, 1)}
-                            self.profile.is_sliding = True
-                            self.profile.modality = "SLIDE"
+                        elif dr == 0 and dc != 0:
+                            self.profile.displacement_vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+                            if abs(dc) >= 2 * sprite_dim:
+                                self.profile.is_sliding = True
+                                self.profile.modality = "SLIDE"
+                            else:
+                                self.profile.modality = "NAV"
+                        elif abs(dr) == abs(dc) and abs(dr) >= 1:
+                            # Diagonal movement (Bishop or Diagonal Slide)
+                            self.profile.displacement_vectors = {
+                                1: (-1, -1),
+                                2: (-1, 1),
+                                3: (1, -1),
+                                4: (1, 1),
+                            }
+                            if abs(dr) >= 2 * sprite_dim:
+                                self.profile.is_sliding = True
+                                self.profile.modality = "SLIDE"
+                            else:
+                                self.profile.is_sliding = False
+                                self.profile.modality = "NAV"
                         elif dr != 0 and dc != 0 and (abs(dr) != abs(dc)):
                             self.profile.displacement_vectors = {1: (-1, -2), 2: (1, -2), 3: (-1, 2), 4: (1, 2)}
                             self.profile.modality = "KNIGHT"
@@ -153,6 +242,9 @@ class DynamicKinematicProber:
                         else:
                             self.profile.displacement_vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
                             self.profile.modality = "NAV"
+                    else:
+                        self.profile.displacement_vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+                        self.profile.modality = "NAV"
 
                 self.profile.probed = True
                 return None
@@ -255,6 +347,8 @@ def separate_background_and_lattice(grid: np.ndarray) -> ArenaSeparation:
     """Separates true canvas background from dense foreground tile grids using
     perimeter incidence, 4-border span, and topological component regularity.
     """
+    if grid.ndim == 3:
+        grid = grid[-1]
     H, W = grid.shape[:2]
     y0, y1, x0, x1, frame_colors = detect_arena_bounds_and_frame(grid)
     interior = grid[y0:y1, x0:x1]
@@ -345,7 +439,7 @@ def separate_background_and_lattice(grid: np.ndarray) -> ArenaSeparation:
         )
         bg_scores[c] = score
 
-    if outer_frac >= 0.80 and c_outer != 4:
+    if outer_frac >= 0.80 and c_outer not in frame_colors:
         bg_color = c_outer
     else:
         bg_color = max(candidate_colors, key=lambda c: bg_scores[c])
@@ -422,6 +516,10 @@ def _induce_object_roles_on_board(
     learned_wall_colors: Optional[Set[int]] = None,
     learned_box_colors: Optional[Set[int]] = None,
     learned_goal_colors: Optional[Set[int]] = None,
+    learned_co_avatar_colors: Optional[Set[int]] = None,
+    perimeter_colors: Optional[Set[int]] = None,
+    learned_trail_colors: Optional[Set[int]] = None,
+    conveyor_colors: Optional[Set[int]] = None,
 ) -> Tuple[Set[Tuple[int, int]], Set[Tuple[int, int]], Set[Tuple[int, int]], Set[Tuple[int, int]]]:
     """Induces (walls, boxes, plates, exit_doors) from structural geometry and empirical role memory.
     Assigns each discrete board cell to a single canonical foreground role to eliminate cardinality errors.
@@ -429,6 +527,12 @@ def _induce_object_roles_on_board(
     w_colors = set(learned_wall_colors) if learned_wall_colors else set()
     b_colors = set(learned_box_colors) if learned_box_colors else set()
     g_colors = set(learned_goal_colors) if learned_goal_colors else set()
+    co_av_c = set(learned_co_avatar_colors) if learned_co_avatar_colors else set()
+    perim_c = set(perimeter_colors) if perimeter_colors else set()
+    t_colors = set(learned_trail_colors) if learned_trail_colors else set()
+    conv_c = set(conveyor_colors) if conveyor_colors else set()
+    if conv_c:
+        w_colors -= conv_c
 
     color_cells: Dict[int, Set[Tuple[int, int]]] = collections.defaultdict(set)
     fill_ratios: Dict[int, List[float]] = collections.defaultdict(list)
@@ -438,7 +542,7 @@ def _induce_object_roles_on_board(
             if (r, c) == p_pos:
                 continue
             cv = int(board[r, c])
-            if cv in (bg_color, avatar_color, 4, 0):
+            if cv in (bg_color, avatar_color) or cv in co_av_c or cv in perim_c or cv in conv_c:
                 continue
             patch = f[y0 + r * scale : y0 + (r + 1) * scale, x0 + c * scale : x0 + (c + 1) * scale]
             cnt = int(np.sum(patch == cv)) if patch.size > 0 else 0
@@ -451,6 +555,10 @@ def _induce_object_roles_on_board(
     exit_doors: Set[Tuple[int, int]] = set()
 
     all_cand_colors = set(color_cells.keys())
+    for c_val in t_colors:
+        if c_val in color_cells:
+            walls |= color_cells[c_val]
+            w_colors.add(c_val)
 
     # 1. Structural wall identification:
     # A color is classified as a wall if:
@@ -479,7 +587,7 @@ def _induce_object_roles_on_board(
         if is_perimeter_wall and len(all_cand_colors - {c_val}) >= 1:
             walls |= cells
             w_colors.add(c_val)
-        elif len(cells) >= 6 and len(all_cand_colors - {c_val}) >= 2:
+        elif len(cells) >= 6 and len(all_cand_colors - {c_val}) >= 1:
             cells_set = set(cells)
             adj_pairs = 2 * sum(
                 1
@@ -521,14 +629,21 @@ def _induce_object_roles_on_board(
                 boxes |= color_cells[box_c]
                 plates |= color_cells[plate_c]
                 for extra_c in remaining_colors:
-                    if extra_c not in (box_c, plate_c):
+                    if extra_c not in (box_c, plate_c) and extra_c not in conv_c:
                         walls |= color_cells[extra_c]
                 paired = True
                 break
 
         if not paired:
             for c_val in remaining_colors:
-                plates |= color_cells[c_val]
+                if learned_goal_colors and c_val in learned_goal_colors:
+                    plates |= color_cells[c_val]
+                elif learned_wall_colors and c_val in learned_wall_colors:
+                    walls |= color_cells[c_val]
+                elif len(color_cells[c_val]) <= 8:
+                    plates |= color_cells[c_val]
+                elif c_val not in conv_c:
+                    walls |= color_cells[c_val]
     elif boxes and not plates and remaining_colors:
         # Boxes are empirically known; deduce plates from remaining colors matching box count
         box_count = len(boxes)
@@ -552,11 +667,10 @@ def _induce_object_roles_on_board(
             for c in remaining_colors[1:]:
                 walls |= color_cells[c]
     elif not boxes and plates and remaining_colors:
-        # Plates are known; deduce boxes from remaining colors matching plate count
+        # Plates are known; deduce boxes only if counts match and environment hasn't proven not to be Sokoban
         plate_count = len(plates)
         matching_cnt = [c for c in remaining_colors if len(color_cells[c]) == plate_count]
-        if matching_cnt:
-            # Boxes have higher patch fill ratio (solid blocks) than empty/marker tiles
+        if matching_cnt and not learned_wall_colors and not learned_goal_colors:
             matching_cnt.sort(
                 key=lambda cv: float(np.mean(fill_ratios[cv])) if fill_ratios[cv] else 0.0,
                 reverse=True,
@@ -567,21 +681,38 @@ def _induce_object_roles_on_board(
                 if c != box_c:
                     walls |= color_cells[c]
         else:
-            remaining_colors.sort(
-                key=lambda cv: float(np.mean(fill_ratios[cv])) if fill_ratios[cv] else 0.0,
-                reverse=True,
-            )
-            box_c = remaining_colors[0]
-            boxes |= color_cells[box_c]
-            for c in remaining_colors[1:]:
-                walls |= color_cells[c]
+            for c in remaining_colors:
+                if learned_goal_colors and c in learned_goal_colors:
+                    plates |= color_cells[c]
+                else:
+                    walls |= color_cells[c]
     elif boxes and plates:
         # Both boxes and plates are identified; any remaining colors are obstacle walls
         for c_val in remaining_colors:
             walls |= color_cells[c_val]
     else:
         for c_val in remaining_colors:
-            plates |= color_cells[c_val]
+            if learned_goal_colors and c_val in learned_goal_colors:
+                plates |= color_cells[c_val]
+            elif learned_wall_colors and c_val in learned_wall_colors:
+                walls |= color_cells[c_val]
+            elif len(color_cells[c_val]) <= 8:
+                plates |= color_cells[c_val]
+            else:
+                walls |= color_cells[c_val]
+
+    if plates and not exit_doors:
+        plate_colors = {int(board[r, c]) for r, c in plates}
+        if len(plate_colors) >= 2:
+            by_color = collections.defaultdict(set)
+            for r, c in plates:
+                by_color[int(board[r, c])].add((r, c))
+            singletons = [c for c, cells in by_color.items() if len(cells) == 1]
+            multiples = [c for c, cells in by_color.items() if len(cells) > 1]
+            if singletons and multiples:
+                exit_c = singletons[0]
+                exit_doors |= by_color[exit_c]
+                plates -= by_color[exit_c]
 
     walls.discard(p_pos)
     return walls, boxes, plates, exit_doors
@@ -595,19 +726,32 @@ def extract_discrete_board(
     learned_wall_colors: Optional[Set[int]] = None,
     learned_box_colors: Optional[Set[int]] = None,
     learned_goal_colors: Optional[Set[int]] = None,
+    learned_co_avatar_colors: Optional[Set[int]] = None,
+    learned_trail_colors: Optional[Set[int]] = None,
+    conveyor_colors: Optional[Set[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Dynamically extracts the downsampled discrete grid representation.
     Induces per-level scale dynamically from the avatar bounding box and classifies object roles.
     """
+    if f.ndim == 3:
+        f = f[-1]
     h_dim, _ = f.shape[:2]
     sep = separate_background_and_lattice(f)
     bg_0 = sep.bg_color
     interior = f[sep.y_min:sep.y_max, sep.x_min:sep.x_max]
 
+    perimeter_colors = set(sep.frame_colors)
+    for c in np.unique(f):
+        if c == bg_0 or c in perimeter_colors:
+            continue
+        c_pts = np.argwhere(f == c)
+        if len(c_pts) > 0 and np.all((c_pts[:, 0] < 4) | (c_pts[:, 0] >= 58) | (c_pts[:, 1] < 4) | (c_pts[:, 1] >= 60)):
+            perimeter_colors.add(int(c))
+
     if avatar_color is None:
         candidates = []
         for c in np.unique(interior):
-            if c in (bg_0, 4, 0, 3, 8) or c in sep.frame_colors:
+            if c == bg_0 or c in perimeter_colors:
                 continue
             pts = np.argwhere((f == c) & (np.arange(h_dim)[:, None] >= 4) & (np.arange(h_dim)[:, None] < 60))
             if 1 <= len(pts) <= 400:
@@ -663,7 +807,21 @@ def extract_discrete_board(
                 for c in range(gw):
                     patch = f[y0 + r * scale : y0 + (r + 1) * scale, x0 + c * scale : x0 + (c + 1) * scale]
                     if patch.size > 0:
-                        board[r, c] = collections.Counter(patch.flatten()).most_common(1)[0][0]
+                        counter = collections.Counter(patch.flatten())
+                        mode_c = counter.most_common(1)[0][0]
+                        if mode_c == bg_0:
+                            fg_cands = [
+                                (cnt, cv)
+                                for cv, cnt in counter.items()
+                                if cv != bg_0 and cv not in sep.frame_colors and cnt >= max(1, (scale * scale) // 32)
+                            ]
+                            if fg_cands:
+                                fg_cands.sort(key=lambda x: x[0], reverse=True)
+                                board[r, c] = fg_cands[0][1]
+                            else:
+                                board[r, c] = mode_c
+                        else:
+                            board[r, c] = mode_c
             walls, boxes, plate_goals, exit_doors = _induce_object_roles_on_board(
                 board,
                 f,
@@ -678,19 +836,37 @@ def extract_discrete_board(
                 learned_wall_colors,
                 learned_box_colors,
                 learned_goal_colors,
+                learned_co_avatar_colors,
+                perimeter_colors,
+                learned_trail_colors,
+                conveyor_colors,
             )
+            if prev_world is not None:
+                for g in prev_world.get("plates", set()):
+                    if g == p_pos:
+                        plate_goals.add(g)
+                for g in prev_world.get("exit_doors", set()):
+                    if g == p_pos:
+                        exit_doors.add(g)
+            co_av_set = set(learned_co_avatar_colors) if learned_co_avatar_colors else set()
+            co_avatars = {
+                (r, c) for r in range(gh) for c in range(gw) if int(board[r, c]) in co_av_set and (r, c) != p_pos
+            }
             return {
                 "board": board,
                 "scale": scale,
                 "gh": gh,
                 "gw": gw,
                 "player": p_pos,
+                "co_avatars": co_avatars,
                 "avatar_color": avatar_color,
                 "walls": walls,
                 "boxes": boxes,
                 "plates": plate_goals,
                 "exit_doors": exit_doors,
                 "all_goals": plate_goals | exit_doors,
+                "bg_color": bg_0,
+                "frame_colors": perimeter_colors,
                 "y0": y0,
                 "x0": x0,
             }
@@ -705,21 +881,44 @@ def extract_discrete_board(
 
     p_min_r = int(pts[:, 0].min())
     p_min_c = int(pts[:, 1].min())
-    y0 = p_min_r % scale
-    x0 = p_min_c % scale
-
-    gh = (64 - y0) // scale
-    gw = (64 - x0) // scale
-    if f[0, 0] in sep.frame_colors and y0 >= 2 and x0 >= 2:
-        gh = (64 - 2 * y0) // scale
-        gw = (64 - 2 * x0) // scale
+    if sep.frame_colors and sep.y_min >= 1 and sep.y_max <= 64:
+        arena_h = sep.y_max - sep.y_min
+        arena_w = sep.x_max - sep.x_min
+        gh = max(1, arena_h // scale)
+        gw = max(1, arena_w // scale)
+        rem_y = arena_h - gh * scale
+        rem_x = arena_w - gw * scale
+        y0 = sep.y_min + rem_y // 2
+        x0 = sep.x_min + rem_x // 2
+    else:
+        y0 = p_min_r % scale
+        x0 = p_min_c % scale
+        gh = (64 - y0) // scale
+        gw = (64 - x0) // scale
+        if f[0, 0] in sep.frame_colors and y0 >= 2 and x0 >= 2:
+            gh = (64 - 2 * y0) // scale
+            gw = (64 - 2 * x0) // scale
 
     board = np.zeros((gh, gw), dtype=np.int32)
     for r in range(gh):
         for c in range(gw):
             patch = f[y0 + r * scale : y0 + (r + 1) * scale, x0 + c * scale : x0 + (c + 1) * scale]
             if patch.size > 0:
-                board[r, c] = collections.Counter(patch.flatten()).most_common(1)[0][0]
+                counter = collections.Counter(patch.flatten())
+                mode_c = counter.most_common(1)[0][0]
+                if mode_c == bg_0:
+                    fg_cands = [
+                        (cnt, cv)
+                        for cv, cnt in counter.items()
+                        if cv != bg_0 and cv not in sep.frame_colors and cnt >= max(1, (scale * scale) // 32)
+                    ]
+                    if fg_cands:
+                        fg_cands.sort(key=lambda x: x[0], reverse=True)
+                        board[r, c] = fg_cands[0][1]
+                    else:
+                        board[r, c] = mode_c
+                else:
+                    board[r, c] = mode_c
 
     player_matches = np.argwhere(board == avatar_color)
     p_cy = int(np.mean(pts[:, 0]))
@@ -754,7 +953,24 @@ def extract_discrete_board(
         learned_wall_colors,
         learned_box_colors,
         learned_goal_colors,
+        learned_co_avatar_colors,
+        perimeter_colors,
+        learned_trail_colors,
+        conveyor_colors,
     )
+
+    co_av_set = set(learned_co_avatar_colors) if learned_co_avatar_colors else set()
+    co_avatars = {
+        (r, c) for r in range(gh) for c in range(gw) if int(board[r, c]) in co_av_set and (r, c) != p_pos
+    }
+
+    if prev_world is not None:
+        for g in prev_world.get("plates", set()):
+            if g == p_pos:
+                plate_goals.add(g)
+        for g in prev_world.get("exit_doors", set()):
+            if g == p_pos:
+                exit_doors.add(g)
 
     return {
         "board": board,
@@ -762,12 +978,15 @@ def extract_discrete_board(
         "gh": gh,
         "gw": gw,
         "player": p_pos,
+        "co_avatars": co_avatars,
         "avatar_color": avatar_color,
         "walls": walls,
         "boxes": boxes,
         "plates": plate_goals,
         "exit_doors": exit_doors,
         "all_goals": plate_goals | exit_doors,
+        "bg_color": bg_0,
+        "frame_colors": perimeter_colors,
         "y0": y0,
         "x0": x0,
     }
@@ -810,6 +1029,7 @@ def detect_lo_N(frame: np.ndarray) -> Optional[int]:
     """Dynamically induces grid dimension N in [3..8] by letterbox padding and cell patch purity."""
     best_N: Optional[int] = None
     best_score = 0.80
+    border_c = int(frame[0, 0])
     for N in range(3, 9):
         scale = 64 // N
         pad = (64 - N * scale) // 2
@@ -821,7 +1041,7 @@ def detect_lo_N(frame: np.ndarray) -> Optional[int]:
                 c0 = pad + gx * scale + 1
                 c1 = pad + (gx + 1) * scale - 1
                 patch = frame[r0:r1, c0:c1]
-                valid = patch[patch != 4]
+                valid = patch[patch != border_c]
                 if valid.size > 0:
                     _, cnts = np.unique(valid, return_counts=True)
                     purities.append(float(np.max(cnts)) / valid.size)
@@ -839,6 +1059,7 @@ def parse_lo_board(
     frame: np.ndarray, N: Optional[int] = None, off_color: Optional[int] = None
 ) -> Tuple[int, int, int, Set[Tuple[int, int]], Set[Tuple[int, int]]]:
     """Extracts (N, scale, pad, lit_cells, wall_cells) dynamically without hardcoding colors."""
+    border_c = int(frame[0, 0])
     if N is None:
         N = detect_lo_N(frame) or 4
     scale = 64 // N
@@ -852,7 +1073,7 @@ def parse_lo_board(
             c0 = pad + gx * scale + 1
             c1 = pad + (gx + 1) * scale - 1
             patch = frame[r0:r1, c0:c1]
-            valid = patch[patch != 4]
+            valid = patch[patch != border_c]
             if valid.size > 0:
                 vals, cnts = np.unique(valid, return_counts=True)
                 cell_colors[(gx, gy)] = int(vals[np.argmax(cnts)])
@@ -994,7 +1215,7 @@ class LatticeGrid:
 def detect_lattice_grid(grid: np.ndarray, bg_color: int) -> Optional[LatticeGrid]:
     """Dynamically detects whether the interior grid contains a regular matrix of tiles."""
     interior = grid[4:60, 4:60]
-    mask = (interior != bg_color) & (interior != 4)
+    mask = (interior != bg_color)
     if not np.any(mask):
         return None
 
@@ -1150,7 +1371,7 @@ class UniversalMemoryMatcher:
 
         if not self.lattice or not self.lattice.centers:
             # Salient probe: click point in top-left tile of largest non-bg component in interior
-            interior_mask = (grid != bg_color) & (grid != 4)
+            interior_mask = (grid != bg_color)
             interior_mask[:4, :] = False
             interior_mask[60:, :] = False
             interior_mask[:, :4] = False
@@ -1246,7 +1467,7 @@ class UniversalMemoryMatcher:
             card_diff = diff
 
         vals, cnts = np.unique(grid_after[card_diff], return_counts=True)
-        cand_indices = [i for i, v in enumerate(vals) if v != bg_color and v != 4]
+        cand_indices = [i for i, v in enumerate(vals) if v != bg_color]
         if not cand_indices:
             return
         best_idx = max(cand_indices, key=lambda i: cnts[i])
@@ -1628,13 +1849,22 @@ def solve_cardinal_astar(
     dynamic_hazards: Optional[Dict[int, Set[Tuple[int, int]]]] = None,
     allow_wait: bool = False,
     max_t: int = 45,
+    displacement_vectors: Optional[Dict[int, Tuple[int, int]]] = None,
 ) -> Optional[List[int]]:
-    """Universal A* Pathfinding with Manhattan distance heuristic and Time-Expanded Hazard Avoidance."""
-    deltas = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+    """Universal A* Pathfinding with Manhattan/Diagonal distance heuristic and Time-Expanded Hazard Avoidance."""
+    deltas = displacement_vectors or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+    is_diag = any(abs(dr) > 0 and abs(dc) > 0 for dr, dc in deltas.values())
+
+    def heuristic(r: int, c: int) -> float:
+        dr = abs(r - goal_pos[0])
+        dc = abs(c - goal_pos[1])
+        if is_diag:
+            return float(max(dr, dc))
+        return float(dr + dc)
 
     # Fast-path: If no dynamic hazards, use standard 2D static A*
     if not dynamic_hazards:
-        q = [(float(abs(start_pos[0] - goal_pos[0]) + abs(start_pos[1] - goal_pos[1])), 0.0, start_pos, [])]
+        q = [(heuristic(start_pos[0], start_pos[1]), 0.0, start_pos, [])]
         visited: Dict[Tuple[int, int], float] = {start_pos: 0.0}
 
         while q:
@@ -1649,13 +1879,13 @@ def solve_cardinal_astar(
                     ncost = cost + 1.0
                     if ncost < visited.get((nr, nc), 1e9):
                         visited[(nr, nc)] = ncost
-                        h = float(abs(nr - goal_pos[0]) + abs(nc - goal_pos[1]))
+                        h = heuristic(nr, nc)
                         heapq.heappush(q, (ncost + h, ncost, (nr, nc), path + [act]))
         return None
 
     # Time-Expanded Graph Search G(r, c, t)
     # State: (cr, cc, t)
-    h0 = float(abs(start_pos[0] - goal_pos[0]) + abs(start_pos[1] - goal_pos[1]))
+    h0 = heuristic(start_pos[0], start_pos[1])
     q = [(h0, 0.0, (start_pos[0], start_pos[1], 0), [])]
     visited_t: Dict[Tuple[int, int, int], float] = {(start_pos[0], start_pos[1], 0): 0.0}
 
@@ -1671,7 +1901,7 @@ def solve_cardinal_astar(
         haz_curr = dynamic_hazards.get(t, set())
         haz_next = dynamic_hazards.get(t + 1, set())
 
-        # Cardinal moves
+        # Directional moves
         for act, (dr, dc) in deltas.items():
             nr, nc = cr + dr, cc + dc
             if 0 <= nr < gh and 0 <= nc < gw and (nr, nc) not in walls:
@@ -1686,7 +1916,7 @@ def solve_cardinal_astar(
                 nt = t + 1
                 if ncost < visited_t.get((nr, nc, nt), 1e9):
                     visited_t[(nr, nc, nt)] = ncost
-                    h = float(abs(nr - goal_pos[0]) + abs(nc - goal_pos[1]))
+                    h = heuristic(nr, nc)
                     heapq.heappush(q, (ncost + h, ncost, (nr, nc, nt), path + [act]))
 
         # Wait in place (Action 5) if allowed
@@ -1695,12 +1925,288 @@ def solve_cardinal_astar(
             nt = t + 1
             if ncost < visited_t.get((cr, cc, nt), 1e9):
                 visited_t[(cr, cc, nt)] = ncost
-                h = float(abs(cr - goal_pos[0]) + abs(cc - goal_pos[1]))
+                h = heuristic(cr, cc)
                 heapq.heappush(q, (ncost + h, ncost, (cr, cc, nt), path + [5]))
 
     # Fallback to static A* if dynamic avoidance couldn't reach within max_t
-    return solve_cardinal_astar(start_pos, goal_pos, walls, gh, gw, dynamic_hazards=None)
+    return solve_cardinal_astar(start_pos, goal_pos, walls, gh, gw, dynamic_hazards=None, displacement_vectors=displacement_vectors)
 
+
+def solve_coupled_joint_astar(
+    start_pos_1: Tuple[int, int],
+    start_pos_2: Tuple[int, int],
+    goal_pos_1: Optional[Tuple[int, int]],
+    goal_pos_2: Optional[Tuple[int, int]],
+    walls_1: Set[Tuple[int, int]],
+    walls_2: Set[Tuple[int, int]],
+    gh: int,
+    gw: int,
+    vectors_1: Optional[Dict[int, Tuple[int, int]]] = None,
+    vectors_2: Optional[Dict[int, Tuple[int, int]]] = None,
+    max_nodes: int = 15000,
+) -> Optional[List[int]]:
+    """Coupled Joint-State A* Search for Echo/Mirror Multi-Sprite Navigation.
+
+    State: ((r1, c1), (r2, c2))
+    Transitions: Action a applies v1(a) to Sprite 1 and v2(a) to Sprite 2 simultaneously.
+    """
+    v1 = vectors_1 or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+    v2 = vectors_2 or {1: (-1, 0), 2: (1, 0), 3: (0, 1), 4: (0, -1)}  # Default horizontal mirror
+
+    def joint_heuristic(p1: Tuple[int, int], p2: Tuple[int, int]) -> float:
+        h = 0.0
+        if goal_pos_1 is not None:
+            h += float(abs(p1[0] - goal_pos_1[0]) + abs(p1[1] - goal_pos_1[1]))
+        if goal_pos_2 is not None:
+            h += float(abs(p2[0] - goal_pos_2[0]) + abs(p2[1] - goal_pos_2[1]))
+        return h
+
+    def is_goal_satisfied(p1: Tuple[int, int], p2: Tuple[int, int]) -> bool:
+        sat_1 = (goal_pos_1 is None) or (p1 == goal_pos_1)
+        sat_2 = (goal_pos_2 is None) or (p2 == goal_pos_2)
+        return sat_1 and sat_2
+
+    init_state = (start_pos_1, start_pos_2)
+    q = [(joint_heuristic(start_pos_1, start_pos_2), 0.0, init_state, [])]
+    visited: Dict[Tuple[Tuple[int, int], Tuple[int, int]], float] = {init_state: 0.0}
+    nodes_expanded = 0
+
+    while q and nodes_expanded < max_nodes:
+        _, cost, (cur1, cur2), path = heapq.heappop(q)
+        nodes_expanded += 1
+
+        if is_goal_satisfied(cur1, cur2):
+            return path
+
+        if cost > visited.get((cur1, cur2), 1e9):
+            continue
+
+        for act in [1, 2, 3, 4]:
+            if act not in v1 or act not in v2:
+                continue
+            dr1, dc1 = v1[act]
+            dr2, dc2 = v2[act]
+
+            nr1, nc1 = cur1[0] + dr1, cur1[1] + dc1
+            nr2, nc2 = cur2[0] + dr2, cur2[1] + dc2
+
+            # Inelastic collision against walls / grid bounds
+            if not (0 <= nr1 < gh and 0 <= nc1 < gw) or (nr1, nc1) in walls_1:
+                nr1, nc1 = cur1
+
+            if not (0 <= nr2 < gh and 0 <= nc2 < gw) or (nr2, nc2) in walls_2:
+                nr2, nc2 = cur2
+
+            # Prune if neither sprite moved
+            if (nr1, nc1) == cur1 and (nr2, nc2) == cur2:
+                continue
+
+            next_state = ((nr1, nc1), (nr2, nc2))
+            ncost = cost + 1.0
+            if ncost < visited.get(next_state, 1e9):
+                visited[next_state] = ncost
+                h = joint_heuristic((nr1, nc1), (nr2, nc2))
+                heapq.heappush(q, (ncost + h, ncost, next_state, path + [act]))
+
+    return None
+
+
+def solve_escort_follower_astar(
+    p_start: Tuple[int, int],
+    e_start: Tuple[int, int],
+    goals: Set[Tuple[int, int]],
+    walls: Set[Tuple[int, int]],
+    gh: int,
+    gw: int,
+    vectors: Optional[Dict[int, Tuple[int, int]]] = None,
+    max_nodes: int = 15000,
+) -> Optional[List[int]]:
+    """Coupled Joint-State A* Search for Escort / Companion Follower Kinematics.
+    State: (p_pos, e_pos)
+    When player executes action a:
+    - Player reaches np = p + v(a) (or stays at p if blocked by wall or out of bounds)
+    - If np == p (player didn't move), escort does not move: ne = e
+    - If np == e (player walks into escort), pruned
+    - Escort steps toward player:
+      * Horizontal priority: if np[1] != e[1]: ne = (e[0], e[1] + sgn(np[1] - e[1]))
+      * Else if np[0] != e[0]: ne = (e[0] + sgn(np[0] - e[0]), e[1])
+      * Else: ne = e
+      * If ne in walls or ne == np: ne = e
+    - Goal: p in goals and e in goals and p != e
+    """
+    v = vectors or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+    def heuristic(p: Tuple[int, int], e: Tuple[int, int]) -> float:
+        g_list = list(goals)
+        if len(g_list) < 2:
+            return 0.0
+        best = 1e9
+        for i in range(len(g_list)):
+            for j in range(len(g_list)):
+                if i != j:
+                    g1, g2 = g_list[i], g_list[j]
+                    dist = abs(p[0] - g1[0]) + abs(p[1] - g1[1]) + abs(e[0] - g2[0]) + abs(e[1] - g2[1])
+                    if dist < best:
+                        best = dist
+        return float(best)
+
+    def is_goal(p: Tuple[int, int], e: Tuple[int, int]) -> bool:
+        return (p in goals and e in goals and p != e)
+
+    init_state = (p_start, e_start)
+    q = [(heuristic(p_start, e_start), 0.0, init_state, [])]
+    visited: Dict[Tuple[Tuple[int, int], Tuple[int, int]], float] = {init_state: 0.0}
+    nodes_expanded = 0
+
+    while q and nodes_expanded < max_nodes:
+        _, cost, (cur_p, cur_e), path = heapq.heappop(q)
+        nodes_expanded += 1
+
+        if is_goal(cur_p, cur_e):
+            return path
+
+        if cost > visited.get((cur_p, cur_e), 1e9):
+            continue
+
+        for act in [1, 2, 3, 4]:
+            if act not in v:
+                continue
+            dr, dc = v[act]
+            np = (cur_p[0] + dr, cur_p[1] + dc)
+            if not (0 <= np[0] < gh and 0 <= np[1] < gw) or np in walls:
+                continue
+            if np == cur_e:
+                continue
+
+            er, ec = cur_e
+            pr, pc = np
+
+            # Escort follower pursuit kinematics:
+            # Verified ground truth: companion advances horizontally if pc != ec, else vertically if pr != er.
+            # Blocked by player np, walls, or grid boundaries.
+            if pc != ec:
+                cand = (er, ec + (1 if pc > ec else -1))
+            elif pr != er:
+                cand = (er + (1 if pr > er else -1), ec)
+            else:
+                cand = cur_e
+
+            if cand != np and (0 <= cand[0] < gh and 0 <= cand[1] < gw) and cand not in walls:
+                ne = cand
+            else:
+                ne = cur_e
+
+            next_state = (np, ne)
+            ncost = cost + 1.0
+            if ncost < visited.get(next_state, 1e9):
+                visited[next_state] = ncost
+                h = heuristic(np, ne)
+                heapq.heappush(q, (ncost + h, ncost, next_state, path + [act]))
+
+    return None
+
+
+def solve_delayed_kinematics_astar(
+    start_pos: Tuple[int, int],
+    current_velocity: Tuple[int, int],
+    goals: Set[Tuple[int, int]],
+    walls: Set[Tuple[int, int]],
+    gh: int,
+    gw: int,
+    deltas: Optional[Dict[int, Tuple[int, int]]] = None,
+    max_states: int = 10000,
+) -> Optional[List[int]]:
+    """A* search for 1-tick delayed velocity command dynamics (Echo Move).
+    At state (r, c, vr, vc) with command action a:
+    next position = (r + vr, c + vc) (clamped on walls/bounds)
+    next velocity = vec(a).
+    """
+    if not goals or start_pos in goals:
+        return []
+    act_deltas = deltas or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+    def h(r: int, c: int) -> int:
+        return min(abs(r - gr) + abs(c - gc) for gr, gc in goals)
+
+    start_vr, start_vc = current_velocity
+    init_state = (start_pos[0], start_pos[1], start_vr, start_vc)
+    q = [(h(start_pos[0], start_pos[1]), 0, start_pos[0], start_pos[1], start_vr, start_vc, [])]
+    visited: Dict[Tuple[int, int, int, int], int] = {init_state: 0}
+    expansions = 0
+
+    while q and expansions < max_states:
+        _, g, r, c, vr, vc, path = heapq.heappop(q)
+        expansions += 1
+        if (r, c) in goals:
+            return path
+        if g > visited.get((r, c, vr, vc), 1000000):
+            continue
+
+        for act, (dr, dc) in act_deltas.items():
+            nr, nc = r + vr, c + vc
+            if not (0 <= nr < gh and 0 <= nc < gw) or (nr, nc) in walls:
+                nr, nc = r, c
+            nvr, nvc = dr, dc
+            nxt = (nr, nc, nvr, nvc)
+            ng = g + 1
+            if ng < visited.get(nxt, 1000000):
+                visited[nxt] = ng
+                f = ng + h(nr, nc)
+                heapq.heappush(q, (f, ng, nr, nc, nvr, nvc, path + [act]))
+
+    return None
+
+
+def solve_echo_kinematics_bfs(
+    start_pos: Tuple[int, int],
+    goal_set: Union[Set[Tuple[int, int]], Tuple[int, int]],
+    walls: Set[Tuple[int, int]],
+    gh: int,
+    gw: int,
+    deltas: Optional[Dict[int, Tuple[int, int]]] = None,
+) -> Optional[List[int]]:
+    """Universal 2-Step Echo Kinematics BFS.
+    In Echo dynamics, each chosen movement command executes for 2 consecutive steps (echoing itself once)
+    unless interrupted by a wall, grid boundary, or goal.
+    """
+    if not isinstance(goal_set, (set, list, tuple)):
+        goals = {goal_set}
+    elif isinstance(goal_set, tuple) and len(goal_set) == 2 and isinstance(goal_set[0], int):
+        goals = {goal_set}
+    else:
+        goals = set(goal_set)
+
+    if start_pos in goals:
+        return []
+
+    act_deltas = deltas or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+    q = collections.deque([(start_pos, [])])
+    visited = {start_pos}
+
+    while q:
+        pos, path = q.popleft()
+        if pos in goals:
+            return path
+        for d, (dr, dc) in act_deltas.items():
+            r, c = pos
+            # Sub-step 1:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < gh and 0 <= nc < gw and (nr, nc) not in walls:
+                r, c = nr, nc
+            if (r, c) in goals:
+                return path + [d]
+            # Sub-step 2 (echo):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < gh and 0 <= nc < gw and (nr, nc) not in walls:
+                r, c = nr, nc
+            if (r, c) in goals:
+                return path + [d, d]
+            if (r, c) not in visited:
+                visited.add((r, c))
+                q.append(((r, c), path + [d, d]))
+
+    return None
 
 
 # =====================================================================
@@ -1710,7 +2216,7 @@ def solve_cardinal_astar(
 def compute_structural_shannon_entropy(grid: np.ndarray, bg_color: int = 5) -> float:
     """Computes H(G) = H_color + 0.5 * H_spatial + 0.3 * H_degree over the gameplay interior."""
     interior = grid[4:60, 4:60]
-    non_bg_mask = (interior != bg_color) & (interior != 4)
+    non_bg_mask = (interior != bg_color)
     total_active = np.sum(non_bg_mask)
     if total_active == 0:
         return 0.0

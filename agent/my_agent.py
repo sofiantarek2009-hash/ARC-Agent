@@ -123,6 +123,8 @@ class MyAgent(Agent):
 
     def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
         """Determines when the agent has completed the current game/level."""
+        if latest_frame is None:
+            return True
         # Check if the environment has reached WIN state
         state_str = str(getattr(latest_frame, "state", "")).upper()
         if "WIN" in state_str or latest_frame.state is getattr(GameState, "WIN", "WIN"):
@@ -214,6 +216,7 @@ class MyAgent(Agent):
             current_grid=grid,
             available_actions=legal_actions,
             game_state=str(state),
+            raw_frame=raw_frame,
         )
 
         # 6. Map to Target GameAction Structure

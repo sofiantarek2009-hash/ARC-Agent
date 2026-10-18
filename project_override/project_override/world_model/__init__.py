@@ -38,6 +38,13 @@ from project_override.world_model.context_manager import (
     HelperFunctionRegistry,
     TokenEstimator,
 )
+from project_override.world_model.retrodict_synthesizer import (
+    ASTWorldModelSandbox,
+    HistoricalTransition,
+    OfflineLLMRuntime,
+    RetrodictionReport,
+    RetrodictWorldModelSynthesizer,
+)
 
 __all__ = [
     # AST Sandbox
@@ -73,4 +80,10 @@ __all__ = [
     "HelperFunction",
     "HelperFunctionRegistry",
     "TokenEstimator",
+    # Retrodict Synthesizer
+    "ASTWorldModelSandbox",
+    "HistoricalTransition",
+    "OfflineLLMRuntime",
+    "RetrodictionReport",
+    "RetrodictWorldModelSynthesizer",
 ]
