@@ -122,7 +122,16 @@ class OfflineLLMRuntime:
         "/kaggle/input/qwen-2-5-coder-7b-instruct",
         "/kaggle/input/qwen2-5-coder-7b-instruct-awq",
         "/kaggle/input/qwen2-5-coder-7b-instruct-gguf",
-        # Kaggle 32B Paths
+        # Kaggle Models API mount paths (format: /kaggle/input/<owner>/<model>/<framework>/<variant>/<version>)
+        # qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1  <- exact model_sources entry in kernel-metadata.json
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/2",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/3",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/32b-instruct-gguf/1",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/32b-instruct-gguf/2",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/7b-instruct-awq/1",
+        "/kaggle/input/qwen-lm/qwen2.5-coder/transformers/7b-instruct/1",
+        # Legacy /kaggle/input flat dataset paths
         "/kaggle/input/qwen-2-5-coder-32b-instruct-awq",
         "/kaggle/input/qwen2-5-coder-32b-instruct-awq",
         "/kaggle/input/qwen-2-5-coder-32b-instruct-gguf",
@@ -184,16 +193,53 @@ class OfflineLLMRuntime:
         for p in self.CANDIDATE_MODEL_PATHS:
             if p and os.path.exists(p):
                 return p
-        # Dynamically scan /kaggle/input for mounted model instances
+        # Fast targeted scan: Kaggle Models API mounts at /kaggle/input/<owner>/<model>/<framework>/<variant>/<version>
+        # Depth-limited — avoids scanning thousands of game frame files in competition datasets
         if os.path.exists("/kaggle/input"):
-            for root, dirs, files in os.walk("/kaggle/input"):
-                if "config.json" in files:
-                    lower = root.lower()
-                    if "32b" in lower or "qwen" in lower:
-                        return root
-                for f in files:
-                    if f.endswith(".gguf") and ("32b" in f.lower() or "qwen" in f.lower()):
-                        return root
+            ki = "/kaggle/input"
+            try:
+                for l1 in os.listdir(ki):                          # owner
+                    p1 = os.path.join(ki, l1)
+                    if not os.path.isdir(p1):
+                        continue
+                    if not any(k in l1.lower() for k in ("qwen", "arc3", "model")):
+                        continue
+                    for l2 in os.listdir(p1):                      # model-name
+                        p2 = os.path.join(p1, l2)
+                        if not os.path.isdir(p2):
+                            continue
+                        for l3 in os.listdir(p2):                  # framework
+                            p3 = os.path.join(p2, l3)
+                            if not os.path.isdir(p3):
+                                continue
+                            for l4 in os.listdir(p3):              # variant
+                                p4 = os.path.join(p3, l4)
+                                if not os.path.isdir(p4):
+                                    continue
+                                for l5 in os.listdir(p4):          # version
+                                    p5 = os.path.join(p4, l5)
+                                    if os.path.isdir(p5) and os.path.exists(os.path.join(p5, "config.json")):
+                                        return p5
+                                # Also check flat variant dirs (version may be the leaf)
+                                if os.path.exists(os.path.join(p4, "config.json")):
+                                    return p4
+                                for f in os.listdir(p4):
+                                    if f.endswith(".gguf"):
+                                        return p4
+            except Exception:
+                pass
+            # Flat /kaggle/input/<slug> fallback (legacy dataset format)
+            try:
+                for slug in os.listdir(ki):
+                    p = os.path.join(ki, slug)
+                    if os.path.isdir(p) and any(k in slug.lower() for k in ("qwen", "32b", "arc3")):
+                        if os.path.exists(os.path.join(p, "config.json")):
+                            return p
+                        for f in os.listdir(p):
+                            if f.endswith(".gguf") and ("32b" in f.lower() or "qwen" in f.lower()):
+                                return p
+            except Exception:
+                pass
         return explicit_path
 
     @staticmethod

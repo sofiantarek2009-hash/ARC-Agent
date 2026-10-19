@@ -138,8 +138,69 @@ except ImportError:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.game_id = kwargs.get("game_id", "default_game")
             self.card_id = kwargs.get("card_id", "test_card")
+            self.agent_name = kwargs.get("agent_name", "myagent")
+            self.ROOT_URL = kwargs.get("ROOT_URL", "http://localhost:8001")
+            self.arc_env = kwargs.get("arc_env", None)
+            self.tags = kwargs.get("tags", [])
             self.action_counter = 0
-            self.frames = []
+            self.frames = [FrameData(levels_completed=0, state=getattr(GameState, "NOT_PLAYED", "NOT_PLAYED"))]
+
+        @property
+        def state(self) -> Any:
+            return self.frames[-1].state if self.frames else getattr(GameState, "NOT_PLAYED", "NOT_PLAYED")
+
+        @property
+        def levels_completed(self) -> int:
+            return getattr(self.frames[-1], "levels_completed", 0) if self.frames else 0
+
+        def append_frame(self, frame: FrameData) -> None:
+            self.frames.append(frame)
+
+        def do_action_request(self, action: GameAction) -> Any:
+            if self.arc_env is None:
+                return None
+            data = action.action_data.model_dump() if hasattr(action, "action_data") else {}
+            reasoning = getattr(action, "reasoning", None)
+            raw = self.arc_env.step(action, data=data, reasoning=reasoning)
+            if raw is None:
+                return None
+            if hasattr(raw, "frame"):
+                frame_list = [arr.tolist() if hasattr(arr, "tolist") else arr for arr in raw.frame]
+                return FrameData(
+                    game_id=raw.game_id,
+                    frame=frame_list,
+                    state=raw.state,
+                    levels_completed=raw.levels_completed,
+                    win_levels=raw.win_levels,
+                    available_actions=raw.available_actions,
+                )
+            return raw
+
+        def take_action(self, action: GameAction) -> Optional[FrameData]:
+            return self.do_action_request(action)
+
+        def cleanup(self, scorecard: Any = None) -> None:
+            pass
+
+        def main(self) -> None:
+            while not self.is_done(self.frames, self.frames[-1]) and self.action_counter <= self.MAX_ACTIONS:
+                obs = self.frames[-1]
+                if self.arc_env and hasattr(self.arc_env, "observation_space") and self.arc_env.observation_space:
+                    raw_obs = self.arc_env.observation_space
+                    obs = FrameData(
+                        game_id=getattr(raw_obs, "game_id", self.game_id),
+                        frame=[arr.tolist() if hasattr(arr, "tolist") else arr for arr in getattr(raw_obs, "frame", [])],
+                        state=getattr(raw_obs, "state", GameState.NOT_PLAYED),
+                        levels_completed=getattr(raw_obs, "levels_completed", 0),
+                        win_levels=getattr(raw_obs, "win_levels", 1),
+                        available_actions=getattr(raw_obs, "available_actions", [1, 2, 3, 4, 5, 6, 7]),
+                    )
+                action = self.choose_action(self.frames, obs)
+                frame = self.take_action(action)
+                if frame:
+                    self.append_frame(frame)
+                self.action_counter += 1
+            self.cleanup()
 
         def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
             raise NotImplementedError
