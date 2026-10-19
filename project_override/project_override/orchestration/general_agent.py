@@ -2331,7 +2331,12 @@ class GeneralAgent:
             if sig not in self.dead_signatures:
                 return cand_act, {}
 
-        fallback = 1 if 1 in legal_actions else legal_actions[0]
+        # Dynamic exploratory cycling fallback over legal active actions (avoid always repeating action 1)
+        valid_cands = [a for a in legal_actions if a not in (0, 7)]
+        if valid_cands:
+            fallback = valid_cands[self.action_counter % len(valid_cands)]
+        else:
+            fallback = legal_actions[0] if legal_actions else 1
         return fallback, {}
 
     def _plan_with_verified_world_model(
