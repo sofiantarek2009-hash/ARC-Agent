@@ -479,12 +479,15 @@ class MyAgent(Agent):
             )
         except Exception as e:
             logger.warning(f"Exception inside orchestration_agent.choose_action: {e}", exc_info=True)
-            action_id = legal_in_game[0] if legal_in_game else 1
+            # Cycle through legal actions to prevent permanent static lock
+            fb_idx = self.actions_in_current_level % len(legal_in_game) if legal_in_game else 0
+            action_id = legal_in_game[fb_idx] if legal_in_game else 1
             action_data = {}
 
         # 6. Ensure action_id is legal
         if action_id not in legal_in_game and legal_in_game:
-            action_id = legal_in_game[0]
+            fb_idx = self.actions_in_current_level % len(legal_in_game)
+            action_id = legal_in_game[fb_idx]
 
         # 7. Construct and return verified GameAction
         selected_action = self._make_game_action(action_id, action_data)

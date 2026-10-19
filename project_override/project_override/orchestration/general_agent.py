@@ -1818,8 +1818,14 @@ class GeneralAgent:
                             return 5, {}
 
             # STRICT GUARD: Only activate beacon triangulation when there are NO visible targets (hidden goal modality)
+            # Also enter beacon mode after many fruitless NAV steps — the 'target' may be a decoy/non-goal
             has_visible_targets = bool(plates or exit_doors or all_goals or boxes)
-            if not has_visible_targets:
+            long_nav_stall = (
+                has_visible_targets
+                and self.learned_game_modality in (None, "NAV")
+                and self.action_counter > 30
+            )
+            if not has_visible_targets or long_nav_stall:
 
                 # C. Perimeter HUD / Ring Distance Triangulation Planner Fallback
                 dist_signal = PerceptualBeaconSignalExtractor.detect_perimeter_hud_metric(
@@ -1861,6 +1867,11 @@ class GeneralAgent:
                                 description="Delayed pipeline step",
                             )
                         return delay_plan[0], {}
+                    # Fallback: delayed planner failed (e.g. complex level layout), use cardinal A* toward nearest target
+                    # The pipeline will still apply the delay — this at least makes progress instead of hanging
+                    direct_plan = solve_cardinal_astar(p_pos, set(targets), walls, gh, gw, norm_displacement_vectors)
+                    if direct_plan:
+                        return direct_plan[0], {}
 
             # 0. ECHO MOVE MODALITY (2-Step Echo Kinematics)
             if self.learned_game_modality == "ECHO":
