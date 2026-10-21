@@ -4,7 +4,7 @@ from typing import Callable, Dict, Optional, Tuple
 class MetagameSchema:
     """
     Stores learned directional action vectors, confirmed entity semantics,
-    and verified Python world models across levels (Zero-Shot Level 2..K Transfer).
+    and verified Moore world models across levels (Zero-Shot Level 2..K Transfer).
     """
 
     INVERSE_PAIRS = {1: 2, 2: 1, 3: 4, 4: 3}

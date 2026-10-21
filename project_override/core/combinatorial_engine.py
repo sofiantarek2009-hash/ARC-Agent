@@ -26,7 +26,6 @@ class GF2ToggleSolver:
             self.click_effects[(int(click_xy[0]), int(click_xy[1]))] = toggled_cells
 
     def try_solve_current_board(self, grid: np.ndarray, bg_color: int) -> Optional[List[Tuple[int, int]]]:
-        """If enough toggle effects are recorded to span active foreground cells, solves Ax = b (mod 2)."""
         if len(self.click_effects) < 3:
             return None
         s = self.cell_stride

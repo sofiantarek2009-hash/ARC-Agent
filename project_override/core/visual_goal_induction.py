@@ -44,7 +44,6 @@ class BlueprintMatcher:
         core = arr[bezel_px:h - bezel_px, bezel_px:w - bezel_px]
         ch, cw = core.shape
 
-        # Check top-left reference legend vs bottom-right main canvas (scale 2x or 3x)
         q_h, q_w = ch // 3, cw // 3
         legend = core[:q_h, :q_w]
         fg_legend = legend != bg_color
@@ -58,16 +57,15 @@ class BlueprintMatcher:
             return []
 
         clicks: List[Tuple[int, int]] = []
-        for scale in (2, 3, 4):
+        for scale in (1, 2, 3, 4):
             scaled = np.repeat(np.repeat(sub_leg, scale, axis=0), scale, axis=1)
             sh, sw = scaled.shape
             if sh >= ch - q_h or sw >= cw - q_w:
                 continue
-            # Scan main canvas for best partial overlap with scaled blueprint
             best_score = 0
             best_pos: Optional[Tuple[int, int]] = None
-            for r0 in range(q_h, ch - sh + 1, 2):
-                for c0 in range(q_w, cw - sw + 1, 2):
+            for r0 in range(q_h, ch - sh + 1, max(1, scale // 2)):
+                for c0 in range(q_w, cw - sw + 1, max(1, scale // 2)):
                     patch = core[r0:r0 + sh, c0:c0 + sw]
                     fg_match = int(np.sum((patch != bg_color) & (scaled != bg_color)))
                     if fg_match > best_score:

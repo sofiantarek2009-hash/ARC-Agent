@@ -9,9 +9,11 @@ class MacroActionQueue:
 
     def __init__(self):
         self.queue: deque = deque()
+        self.active_subagent: str = "NONE"
 
-    def push_plan(self, actions: List[Any]) -> None:
+    def push_plan(self, actions: List[Any], subagent_tag: str = "PLANNER") -> None:
         self.queue.clear()
+        self.active_subagent = subagent_tag
         for a in actions:
             if isinstance(a, tuple) and len(a) == 2:
                 self.queue.append((int(a[0]), dict(a[1])))
@@ -21,13 +23,16 @@ class MacroActionQueue:
     def pop_next(self, last_delta_omega: Optional[int] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
         if last_delta_omega == 0:
             self.queue.clear()
+            self.active_subagent = "NONE"
             return None
         if self.queue:
             return self.queue.popleft()
+        self.active_subagent = "NONE"
         return None
 
     def clear(self) -> None:
         self.queue.clear()
+        self.active_subagent = "NONE"
 
 
 def astar_grid(
@@ -36,8 +41,10 @@ def astar_grid(
     walls: Set[Tuple[int, int]],
     action_vectors: Dict[int, Tuple[int, int]],
     grid_shape: Tuple[int, int] = (64, 64),
+    portals: Optional[Dict[Tuple[int, int], Tuple[int, int]]] = None,
     max_expansions: int = 2500,
 ) -> Optional[List[int]]:
+    """A* Grid Planner supporting arbitrary displacement strides and paired Portal teleporters."""
     if not action_vectors:
         return None
     h, w = grid_shape
@@ -48,7 +55,16 @@ def astar_grid(
         return []
 
     def heuristic(pos: Tuple[int, int]) -> float:
-        return (abs(pos[0] - target[0]) + abs(pos[1] - target[1])) / float(s)
+        d_direct = (abs(pos[0] - target[0]) + abs(pos[1] - target[1])) / float(s)
+        if portals:
+            for p_in, p_out in portals.items():
+                d_portal = (
+                    abs(pos[0] - p_in[0]) + abs(pos[1] - p_in[1])
+                    + abs(p_out[0] - target[0]) + abs(p_out[1] - target[1])
+                ) / float(s)
+                if d_portal + 1.0 < d_direct:
+                    d_direct = d_portal + 1.0
+        return d_direct
 
     open_heap = [(heuristic(start), 0, start, [])]
     visited: Dict[Tuple[int, int], int] = {start: 0}
@@ -82,6 +98,12 @@ def astar_grid(
                 continue
 
             nxt = (nr, nc)
+            if portals:
+                for p_in, p_out in portals.items():
+                    if abs(nxt[0] - p_in[0]) < s and abs(nxt[1] - p_in[1]) < s:
+                        nxt = p_out
+                        break
+
             new_g = g + 1
             if nxt not in visited or new_g < visited[nxt]:
                 visited[nxt] = new_g

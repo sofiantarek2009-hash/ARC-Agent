@@ -3,7 +3,7 @@ import numpy as np
 
 from project_override.core.circuit_engine import AC3CircuitSolver
 from project_override.core.combinatorial_engine import GF2ToggleSolver, SplitPanelSymmetrySolver
-from project_override.core.dead_signature import DeadSignatureTable, compute_arena_hash
+from project_override.core.dead_signature import DeadSignatureTable, DynamicHUDMasker, compute_arena_hash
 from project_override.core.universal_engine import SystemPacer
 from project_override.core.visual_goal_induction import JordanCurveCavityInducer, LatentMemoryMatcher
 from project_override.perception.observation_processor import ObservationProcessor
@@ -14,6 +14,7 @@ from project_override.planning.symbolic_planners import (
     ice_slide_bfs,
     sokoban_bfs,
 )
+from project_override.world_model.ast_sandbox import CodeActREPL
 from project_override.world_model.context_manager import ContextManager
 from project_override.world_model.hypothesis_manager import HypothesisManager
 from project_override.world_model.metagame_schema import MetagameSchema
@@ -23,20 +24,61 @@ from project_override.world_model.retrodict_synthesizer import (
 )
 
 
+class RecursiveSubAgentController:
+    """
+    Symbolica ARCgentica Recursive Sub-Agent Orchestrator.
+    Enforces strict per-subagent action budgets so no sub-agent can loop or exhaust RHAE.
+    """
+
+    BUDGETS = {
+        "PROBE": 2,
+        "INTERACT": 3,
+        "MOORE_PLANNER": 16,
+        "CODEACT_EXPLORER": 5,
+    }
+
+    def __init__(self):
+        self.active_role: str = "PROBE"
+        self.remaining_budget: int = 2
+        self.role_failures: Dict[str, int] = {}
+
+    def reset_level(self, schema_frozen: bool = False) -> None:
+        self.role_failures.clear()
+        if schema_frozen:
+            self.active_role = "MOORE_PLANNER"
+            self.remaining_budget = self.BUDGETS["MOORE_PLANNER"]
+        else:
+            self.active_role = "PROBE"
+            self.remaining_budget = self.BUDGETS["PROBE"]
+
+    def delegate(self, role: str) -> None:
+        self.active_role = role
+        self.remaining_budget = self.BUDGETS.get(role, 6)
+
+    def on_step_outcome(self, delta_omega: int) -> None:
+        self.remaining_budget -= 1
+        if delta_omega == 0:
+            self.role_failures[self.active_role] = self.role_failures.get(self.active_role, 0) + 1
+            self.remaining_budget = 0
+
+
 class GeneralAgent:
     """
-    Full 12-Module Neurosymbolic + CEGIS + BFWS + Qwen-32B-AWQ Orchestrator for ARC-AGI-3.
+    Unified Tycho Moore Machine + Duck CodeAct REPL + RGB History + ARCgentica Recursive Harness.
     """
 
     def __init__(self, game_id: str = "unknown"):
         self.game_id = game_id
         self.processor = ObservationProcessor(bezel_px=4)
+        self.hud_masker = DynamicHUDMasker(shape=(64, 64), default_bezel=4)
         self.dead_table = DeadSignatureTable()
         self.macro_queue = MacroActionQueue()
+        self.subagent_ctrl = RecursiveSubAgentController()
         self.schema = MetagameSchema()
         self.hypotheses = HypothesisManager()
-        self.context = ContextManager(high_water_tokens=1900, low_water_tokens=1100)
+        self.context = ContextManager(high_water_tokens=1900, low_water_tokens=1100, game_id=game_id)
         self.synthesizer = RetrodictWorldModelSynthesizer()
+        self.codeact_repl = CodeActREPL()
         self.memory_matcher = LatentMemoryMatcher()
         self.gf2_solver = GF2ToggleSolver()
         self.pacer = SystemPacer(max_level_compute_s=45.0)
@@ -106,9 +148,11 @@ class GeneralAgent:
         self.last_action_id = None
         self.last_delta_omega = None
         self.macro_queue.clear()
+        self.hud_masker.reset_level()
         self.dead_table.reset_level(clear_deaths=True)
         self.synthesizer.reset_level(keep_verified=True)
         self.hypotheses.reset_level(keep_semantics=True)
+        self.context.history_log.reset_level()
         self.memory_matcher.reset()
         self.gf2_solver.reset()
         self.pacer.reset_level()
@@ -117,12 +161,9 @@ class GeneralAgent:
         self.visited_goals.clear()
         self.transition_history.clear()
         self.schema.freeze_on_level_clear()
+        self.subagent_ctrl.reset_level(schema_frozen=self.schema.frozen)
 
     def _locate_avatar_centroid(self, grid: np.ndarray) -> Optional[Tuple[int, int]]:
-        """
-        Motion-Anchored Sprite Locator:
-        Filters matching avatar-color pixels to the coherent sprite cluster nearest `last_known_av_pos`.
-        """
         if not self.learned_avatar_colors:
             return None
         arr = np.asarray(grid, dtype=np.int8)
@@ -130,11 +171,8 @@ class GeneralAgent:
         mask = np.zeros((h, w), dtype=bool)
         for c in self.learned_avatar_colors:
             mask |= (arr == c)
-        if h >= 16 and w >= 16:
-            mask[:4, :] = False
-            mask[h - 4:, :] = False
-            mask[:, :4] = False
-            mask[:, w - 4:] = False
+        if arr.shape == self.hud_masker.shape:
+            mask &= (~self.hud_masker.hud_mask)
         pts = np.argwhere(mask)
         if len(pts) == 0:
             return None
@@ -231,7 +269,10 @@ class GeneralAgent:
             if valid_gf2:
                 first_xy = valid_gf2[0]
                 if len(valid_gf2) > 1:
-                    self.macro_queue.push_plan([(6, {"x": int(x), "y": int(y)}) for x, y in valid_gf2[1:]])
+                    self.macro_queue.push_plan(
+                        [(6, {"x": int(x), "y": int(y)}) for x, y in valid_gf2[1:]],
+                        subagent_tag="GF2_SOLVER",
+                    )
                 self.last_click_xy = (int(first_xy[0]), int(first_xy[1]))
                 return 6, {"x": int(first_xy[0]), "y": int(first_xy[1])}
 
@@ -295,10 +336,11 @@ class GeneralAgent:
         grid: np.ndarray,
         available_actions: List[int],
         levels_completed: int = 0,
+        frame_sequence: Optional[List[np.ndarray]] = None,
     ) -> Tuple[int, Dict[str, Any]]:
         self.pacer.begin_step()
         try:
-            return self._step_impl(grid, available_actions, levels_completed)
+            return self._step_impl(grid, available_actions, levels_completed, frame_sequence)
         finally:
             self.pacer.end_step()
 
@@ -307,18 +349,27 @@ class GeneralAgent:
         grid: np.ndarray,
         available_actions: List[int],
         levels_completed: int = 0,
+        frame_sequence: Optional[List[np.ndarray]] = None,
     ) -> Tuple[int, Dict[str, Any]]:
         arr = np.asarray(grid, dtype=np.int8)
         if levels_completed > self.current_level:
             self._on_level_advance(levels_completed)
 
-        curr_hash = compute_arena_hash(arr, bezel_px=4)
-        avail = [int(a) for a in available_actions if int(a) != 0] if available_actions else [1, 2, 3, 4]
+        if frame_sequence and len(frame_sequence) > 1:
+            anim_info = self.processor.analyze_animation_frames(frame_sequence)
+            if anim_info.get("is_continuous_slide") and self.learned_game_modality == "NAV":
+                self.learned_game_modality = "SLIDE"
 
-        # 1. Process transition from previous step
+        # 1. Process transition from previous step (with Tycho Dynamic HUD Masking)
         if self.prev_grid is not None and self.last_action_id is not None and self.prev_hash is not None:
-            delta = self.processor.compute_delta_omega(self.prev_grid, arr)
+            self.hud_masker.observe_transition(self.prev_grid, arr)
+            curr_hash = compute_arena_hash(arr, bezel_px=4, hud_masker=self.hud_masker)
+            delta = self.processor.compute_delta_omega(
+                self.prev_grid, arr, hud_mask=self.hud_masker.hud_mask
+            )
             self.last_delta_omega = delta
+            self.subagent_ctrl.on_step_outcome(delta)
+
             cx, cy = self.last_click_xy if self.last_action_id == 6 else (0, 0)
             self.dead_table.record_transition(
                 self.prev_hash,
@@ -334,22 +385,31 @@ class GeneralAgent:
             if len(self.transition_history) > 24:
                 self.transition_history.pop(0)
             self.synthesizer.record_transition(
-                self.prev_grid, self.last_action_id, {"x": cx, "y": cy} if self.last_action_id == 6 else {}, arr
+                self.prev_grid,
+                self.last_action_id,
+                {"x": cx, "y": cy} if self.last_action_id == 6 else {},
+                arr,
+                hud_mask=self.hud_masker.hud_mask,
             )
             diff_note = self.processor.summarize_transition_diff(self.prev_grid, arr) if delta > 0 else "BLOCKED"
-            self.context.record_step(self.step_in_level, self.last_action_id, delta, note=diff_note)
 
             if self.last_action_id == 6 and delta > 0:
                 bg = self.processor.induce_background_color(arr, self.learned_floor_color)
                 self.gf2_solver.record_click_effect(self.prev_grid, arr, self.last_click_xy)
                 match_xy = self.memory_matcher.observe_reveal(self.prev_grid, arr, self.last_click_xy, bg)
                 if match_xy is not None:
-                    self.macro_queue.push_plan([(6, {"x": int(match_xy[0]), "y": int(match_xy[1])})])
+                    self.macro_queue.push_plan(
+                        [(6, {"x": int(match_xy[0]), "y": int(match_xy[1])})],
+                        subagent_tag="MEMORY_MATCH",
+                    )
 
             if self.last_action_id in (1, 2, 3, 4):
                 if delta > 0:
                     rigid = self.processor.infer_rigid_translation(
-                        self.prev_grid, arr, self.learned_avatar_colors if self.learned_avatar_colors else None
+                        self.prev_grid,
+                        arr,
+                        self.learned_avatar_colors if self.learned_avatar_colors else None,
+                        hud_mask=self.hud_masker.hud_mask,
                     )
                     if rigid is not None:
                         fl_c, av_colors, (dr, dc), post_cent, pushed_boxes, remote_triggers = rigid
@@ -359,7 +419,22 @@ class GeneralAgent:
                         for ac in av_colors:
                             self.hypotheses.record_color_role(ac, "AVATAR")
                         self.learned_avatar_color = min(self.learned_avatar_colors)
-                        self.last_known_av_pos = (int(round(post_cent[0])), int(round(post_cent[1])))
+                        new_av_rc = (int(round(post_cent[0])), int(round(post_cent[1])))
+
+                        # Detect portal teleportation jump vs normal stride
+                        expected_vec = self.schema.displacement_vectors.get(self.last_action_id)
+                        if expected_vec is not None and self.prev_av_pos is not None:
+                            exp_stride = max(abs(expected_vec[0]), abs(expected_vec[1]))
+                            actual_jump = max(abs(dr), abs(dc))
+                            if actual_jump > max(12, exp_stride * 2):
+                                entry_rc = (self.prev_av_pos[0] + expected_vec[0], self.prev_av_pos[1] + expected_vec[1])
+                                self.hypotheses.register_portal_jump(entry_rc, new_av_rc)
+                            else:
+                                self.schema.record_vector(self.last_action_id, (dr, dc))
+                        else:
+                            self.schema.record_vector(self.last_action_id, (dr, dc))
+
+                        self.last_known_av_pos = new_av_rc
                         if pushed_boxes:
                             self.confirmed_box_colors |= pushed_boxes
                             for bc in pushed_boxes:
@@ -370,15 +445,29 @@ class GeneralAgent:
                                 if r_trig not in self.priority_remote_subgoals:
                                     self.priority_remote_subgoals.insert(0, r_trig)
                             self.visited_goals.clear()
-                        self.schema.record_vector(self.last_action_id, (dr, dc))
                         self._retroactive_wall_scan()
-                        if max(abs(dr), abs(dc)) > 8:
+                        if max(abs(dr), abs(dc)) > 8 and not self.hypotheses.portal_map:
                             self.learned_game_modality = "SLIDE"
                         elif abs(dr) > 0 and abs(dc) > 0:
                             self.learned_game_modality = "KNIGHT"
                 else:
                     self._induce_blocking_wall(arr, self.last_action_id)
 
+            self.context.record_step(
+                step=self.step_in_level,
+                action_id=self.last_action_id,
+                delta_omega=delta,
+                note=diff_note,
+                level_idx=self.current_level,
+                pre_hash=self.prev_hash,
+                post_hash=curr_hash,
+                coord_xy=(cx, cy),
+                av_pos=self.last_known_av_pos,
+            )
+        else:
+            curr_hash = compute_arena_hash(arr, bezel_px=4, hud_masker=self.hud_masker)
+
+        avail = [int(a) for a in available_actions if int(a) != 0] if available_actions else [1, 2, 3, 4]
         self.prev_grid = arr.copy()
         self.prev_hash = curr_hash
         self.step_in_level += 1
@@ -409,18 +498,20 @@ class GeneralAgent:
             self.last_action_id = act_id
             return act_id, data
 
-        # 3. Loop Detection -> Empirical State-Graph BFS Escape
+        # 3. Loop Detection -> Empirical State-Graph BFS Escape with Penalty Scoring
         if self.dead_table.detect_loop():
             self.macro_queue.clear()
             all_disc = [a for a in avail if a in (1, 2, 3, 4, 5, 7)]
-            escape_plan = self.dead_table.bfs_to_unexplored_action(curr_hash, all_disc, self.current_level)
+            escape_plan = self.dead_table.bfs_to_unexplored_action(
+                curr_hash, all_disc, self.current_level, self.last_action_id
+            )
             if escape_plan:
                 first_act = escape_plan[0]
-                self.macro_queue.push_plan(escape_plan[1:])
+                self.macro_queue.push_plan(escape_plan[1:], subagent_tag="LOOP_ESCAPE")
                 self.last_action_id = first_act
                 return first_act, {}
 
-        # 4. Pop Queued Macro-Plan
+        # 4. Pop Queued Macro-Plan (Budget-checked by RecursiveSubAgentController)
         queued = self.macro_queue.pop_next(self.last_delta_omega)
         if queued is not None:
             q_act, q_data = queued
@@ -434,15 +525,16 @@ class GeneralAgent:
             else:
                 self.macro_queue.clear()
 
-        # 5. Fast 2-Probe Orthogonal Kinematic Basis Discovery on Level 0 (Skipped on Levels 2..K!)
+        # 5. Sub-Agent 1: PROBE_SUBAGENT (Max 2 probes on Level 1, 0 probes on Levels 2..K)
         probe_act = self.hypotheses.next_probe(
             move_actions, self.schema.displacement_vectors, schema_frozen=self.schema.frozen
         )
         if probe_act is not None and not self.dead_table.is_dead(curr_hash, probe_act, 0, 0, self.current_level):
+            self.subagent_ctrl.delegate("PROBE")
             self.last_action_id = probe_act
             return probe_act, {}
 
-        # 6. Symbolic + CEGIS World-Model + BFWS + Qwen 32B AWQ Planning
+        # 6. Sub-Agent 2 & 3: MOORE_PLANNER_SUBAGENT + CODEACT_EXPLORER_SUBAGENT
         if av_pos is not None and self.schema.displacement_vectors and self.pacer.has_compute_budget():
             obstacles = self._build_obstacle_set(arr)
             goals = self._find_candidate_goals(arr, av_pos)
@@ -462,34 +554,48 @@ class GeneralAgent:
                     if soko_plan:
                         first_act = soko_plan[0]
                         if not self.dead_table.is_dead(curr_hash, first_act, 0, 0, self.current_level):
-                            self.macro_queue.push_plan(soko_plan[1:])
+                            self.subagent_ctrl.delegate("MOORE_PLANNER")
+                            self.macro_queue.push_plan(soko_plan[1:], subagent_tag="SOKOBAN")
                             self.last_action_id = first_act
                             return first_act, {}
 
-            # B. Navigate to candidate goals via A* / Ice-Slide + optional Action-5 Interact
+            # B. Navigate to candidate goals via Portal-Aware A* / Ice-Slide + Action-5 Interact
             for goal in goals[:5]:
                 if self.learned_game_modality == "SLIDE":
                     plan = ice_slide_bfs(av_pos, goal, obstacles, self.schema.displacement_vectors, arr.shape)
                 else:
-                    plan = astar_grid(av_pos, goal, obstacles, self.schema.displacement_vectors, arr.shape)
+                    plan = astar_grid(
+                        av_pos,
+                        goal,
+                        obstacles,
+                        self.schema.displacement_vectors,
+                        arr.shape,
+                        portals=self.hypotheses.portal_map,
+                    )
                 if plan:
                     first_act = plan[0]
                     if not self.dead_table.is_dead(curr_hash, first_act, 0, 0, self.current_level):
                         full_plan: List[Any] = list(plan[1:])
                         if 5 in avail:
                             full_plan.append(5)
-                        self.macro_queue.push_plan(full_plan)
+                        self.subagent_ctrl.delegate("MOORE_PLANNER")
+                        self.macro_queue.push_plan(full_plan, subagent_tag="GOAL_ASTAR")
                         self.last_action_id = first_act
                         return first_act, {}
 
-            # C. CEGIS Online Python World-Model Synthesis + In-Memory BFWS/IW(2) Lookahead
-            if self.step_in_level >= 3 and (self.synthesizer.verified_fn is None or self.step_in_level % 4 == 0):
+            # C. Tycho Auto-Triggered Moore World-Model Repair + Replay-Audited BFWS/IW(2) Lookahead
+            if self.step_in_level >= 3 and (
+                self.synthesizer.verified_fn is None
+                or self.synthesizer.needs_repair
+                or self.step_in_level % 4 == 0
+            ):
                 self.synthesizer.synthesize_world_model(
                     self.learned_floor_color,
                     self.learned_avatar_colors,
                     self.confirmed_wall_colors | self.confirmed_hazard_colors,
                     self.confirmed_box_colors,
                     self.schema.displacement_vectors,
+                    hud_mask=self.hud_masker.hud_mask,
                 )
             if self.synthesizer.verified_fn is not None:
                 iw_plan = self.synthesizer.plan_iw_lookahead(
@@ -498,12 +604,14 @@ class GeneralAgent:
                     goals[0] if goals else None,
                     self.learned_avatar_colors,
                     dead_table=self.dead_table,
+                    hud_masker=self.hud_masker,
                     level_idx=self.current_level,
                 )
                 if iw_plan:
                     first_act = iw_plan[0]
                     if not self.dead_table.is_dead(curr_hash, first_act, 0, 0, self.current_level):
-                        self.macro_queue.push_plan(iw_plan[1:])
+                        self.subagent_ctrl.delegate("MOORE_PLANNER")
+                        self.macro_queue.push_plan(iw_plan[1:], subagent_tag="BFWS_MOORE")
                         self.last_action_id = first_act
                         return first_act, {}
 
@@ -514,12 +622,14 @@ class GeneralAgent:
             if frontier_plan:
                 first_act = frontier_plan[0]
                 if not self.dead_table.is_dead(curr_hash, first_act, 0, 0, self.current_level):
-                    self.macro_queue.push_plan(frontier_plan[1:])
+                    self.subagent_ctrl.delegate("MOORE_PLANNER")
+                    self.macro_queue.push_plan(frontier_plan[1:], subagent_tag="FRONTIER")
                     self.last_action_id = first_act
                     return first_act, {}
 
-            # E. Offline Qwen 32B AWQ Subgoal Architect (with ASCII Entity Graph + Franzen 4-Tier Context)
-            if self.step_in_level >= 6 and self.step_in_level % 8 == 0:
+            # E. Duck CodeAct REPL + Qwen 32B AWQ Subgoal Architect
+            if self.step_in_level >= 5 and self.step_in_level % 6 == 0:
+                self.subagent_ctrl.delegate("CODEACT_EXPLORER")
                 llm = OfflineLLMRuntime.get_instance()
                 bg = self.processor.induce_background_color(arr, self.learned_floor_color)
                 ent_graph = self.processor.encode_ascii_entity_graph(arr, bg_color=bg)
@@ -534,11 +644,39 @@ class GeneralAgent:
                 )
                 sub = llm.infer_subgoal(prompt)
                 if sub:
-                    if sub.get("subgoal") == "NAVIGATE" and isinstance(sub.get("target_rc"), list):
+                    if sub.get("subgoal") == "CODEACT" and isinstance(sub.get("code"), str):
+                        ents = self.processor.extract_entities(arr, bg_color=bg, ignore_bezel=True)
+                        cavs = JordanCurveCavityInducer.find_cavities(arr, bg_color=bg, bezel_px=4)
+                        repl_plan = self.codeact_repl.execute_codeact(
+                            code_str=sub["code"],
+                            grid=arr,
+                            prev_grid=self.prev_grid,
+                            av_pos=av_pos,
+                            bg_color=bg,
+                            entities=ents,
+                            cavities=cavs,
+                            vectors=self.schema.displacement_vectors,
+                            avail_actions=avail,
+                            history_records=self.context.history_log.records,
+                        )
+                        if repl_plan:
+                            self.macro_queue.push_plan(repl_plan, subagent_tag="CODEACT_REPL")
+                            nxt_item = self.macro_queue.pop_next(1)
+                            if nxt_item is not None:
+                                self.last_action_id = nxt_item[0]
+                                return nxt_item
+                    elif sub.get("subgoal") == "NAVIGATE" and isinstance(sub.get("target_rc"), list):
                         tr, tc = int(sub["target_rc"][0]), int(sub["target_rc"][1])
-                        plan = astar_grid(av_pos, (tr, tc), obstacles, self.schema.displacement_vectors, arr.shape)
+                        plan = astar_grid(
+                            av_pos,
+                            (tr, tc),
+                            obstacles,
+                            self.schema.displacement_vectors,
+                            arr.shape,
+                            portals=self.hypotheses.portal_map,
+                        )
                         if plan and not self.dead_table.is_dead(curr_hash, plan[0], 0, 0, self.current_level):
-                            self.macro_queue.push_plan(plan[1:])
+                            self.macro_queue.push_plan(plan[1:], subagent_tag="LLM_NAV")
                             self.last_action_id = plan[0]
                             return plan[0], {}
                     elif sub.get("subgoal") == "CLICK" and 6 in avail and isinstance(sub.get("click_xy"), list):
@@ -553,12 +691,14 @@ class GeneralAgent:
                             self.last_action_id = aid
                             return aid, {}
 
-        # 7. Empirical State-Graph BFS to nearest untried action (IW(1)/IW(2) Graph Explorer)
+        # 7. Empirical State-Graph BFS to nearest untried action (with Action Penalty Ranking)
         all_discrete = [a for a in avail if a in (1, 2, 3, 4, 5, 7)]
-        graph_plan = self.dead_table.bfs_to_unexplored_action(curr_hash, all_discrete, self.current_level)
+        graph_plan = self.dead_table.bfs_to_unexplored_action(
+            curr_hash, all_discrete, self.current_level, self.last_action_id
+        )
         if graph_plan:
             first_act = graph_plan[0]
-            self.macro_queue.push_plan(graph_plan[1:])
+            self.macro_queue.push_plan(graph_plan[1:], subagent_tag="GRAPH_BFS")
             self.last_action_id = first_act
             return first_act, {}
 
@@ -568,11 +708,16 @@ class GeneralAgent:
             self.last_action_id = act_id
             return act_id, data
 
-        for a in all_discrete:
-            if not self.dead_table.is_dead(curr_hash, a, 0, 0, self.current_level):
-                self.last_action_id = a
-                return a, {}
+        if all_discrete:
+            ranked_disc = sorted(
+                all_discrete,
+                key=lambda a: self.dead_table.compute_action_penalty(
+                    curr_hash, a, self.last_action_id, 0, 0, self.current_level
+                ),
+            )
+            chosen = ranked_disc[0]
+            self.last_action_id = chosen
+            return chosen, {}
 
-        chosen = all_discrete[self.step_in_level % len(all_discrete)] if all_discrete else 1
-        self.last_action_id = chosen
-        return chosen, {}
+        self.last_action_id = 1
+        return 1, {}

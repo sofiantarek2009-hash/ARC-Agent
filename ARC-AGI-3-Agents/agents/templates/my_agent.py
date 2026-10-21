@@ -1,52 +1,45 @@
-import os
-import sys
 import threading
-from pathlib import Path
 from typing import Any, List
 import numpy as np
-
-CURRENT_DIR = Path(__file__).resolve().parent
-for p in [CURRENT_DIR.parent, CURRENT_DIR.parent.parent, Path("/tmp")]:
-    if (p / "project_override").exists() and str(p) not in sys.path:
-        sys.path.insert(0, str(p))
 
 from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 from project_override.orchestration.general_agent import GeneralAgent
 
-_COMPUTE_SEMAPHORE = threading.BoundedSemaphore(8)
+_COMPUTE_SEMAPHORE = threading.Semaphore(2)
 
 
 class MyAgent(Agent):
-    """Official ARC-AGI-3 Harness Adapter for Project Override GeneralAgent."""
+    """
+    Competition Entrypoint for ARC-AGI-3 (Swarm / Multi-Thread Safe).
+    Passes both settled frames and intermediate ARCEngine animation sequences to GeneralAgent.
+    """
 
-    MAX_ACTIONS: int = 400
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
-        self.orchestration_agent = GeneralAgent(game_id=getattr(self, "game_id", "unknown"))
+        gid = getattr(self, "game_id", "arc_game")
+        self.orchestration_agent = GeneralAgent(game_id=str(gid))
 
     def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
-        return latest_frame.state is GameState.WIN
+        return latest_frame.state == GameState.WIN
 
     def choose_action(self, frames: List[FrameData], latest_frame: FrameData) -> GameAction:
-        if latest_frame.state is GameState.NOT_PLAYED:
+        if latest_frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
+            if latest_frame.state == GameState.GAME_OVER:
+                self.orchestration_agent.on_game_over()
             return GameAction.RESET
 
-        raw_frames = getattr(latest_frame, "frame", [])
-        grid = None
-        if raw_frames:
-            grid = np.asarray(raw_frames[-1], dtype=np.int8)
-            if grid.ndim == 3:
-                grid = grid[-1]
-
-        if latest_frame.state is GameState.GAME_OVER:
-            with _COMPUTE_SEMAPHORE:
-                self.orchestration_agent.on_game_over(grid)
-            return GameAction.RESET
-
-        if grid is None:
-            return GameAction.ACTION1
+        raw_frame = latest_frame.frame
+        frame_seq: List[np.ndarray] = []
+        if isinstance(raw_frame, list) and len(raw_frame) > 0:
+            arr = np.asarray(raw_frame, dtype=np.int8)
+            if arr.ndim == 3:
+                frame_seq = [arr[i] for i in range(arr.shape[0])]
+                grid = arr[-1]
+            else:
+                grid = arr
+        else:
+            grid = np.zeros((64, 64), dtype=np.int8)
 
         avail_raw = getattr(latest_frame, "available_actions", None) or [1, 2, 3, 4]
         avail_ids = [int(getattr(a, "value", a)) for a in avail_raw]
@@ -57,6 +50,7 @@ class MyAgent(Agent):
                 grid=grid,
                 available_actions=avail_ids,
                 levels_completed=lvls,
+                frame_sequence=frame_seq,
             )
 
         try:

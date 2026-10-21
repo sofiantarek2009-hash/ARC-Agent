@@ -50,7 +50,10 @@ def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
 
 
 class ObservationProcessor:
-    """Zero-color-assumption CCL + Motion-Anchored Sprite Tracker + Remote Trigger Detector."""
+    """
+    Zero-color-assumption CCL + Multi-Frame Animation Kinematics Extractor
+    + Motion-Anchored Sprite Tracker + Remote Causal Trigger Detector.
+    """
 
     def __init__(self, bezel_px: int = 4):
         self.bezel_px = bezel_px
@@ -125,7 +128,7 @@ class ObservationProcessor:
 
     def encode_ascii_entity_graph(self, grid: np.ndarray, bg_color: int) -> str:
         ents = self.extract_entities(grid, bg_color=bg_color, ignore_bezel=True)
-        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:20]
+        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:22]
         parts = [
             f"E{e.id}(c={e.color},m={e.mass},rc=({int(round(e.centroid[0]))},{int(round(e.centroid[1]))}))"
             for e in ents_sorted
@@ -133,7 +136,6 @@ class ObservationProcessor:
         return "; ".join(parts)
 
     def summarize_transition_diff(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> str:
-        """Compact symbolic diff of vanished and appeared pixels for Qwen 32B CEGIS synthesis."""
         f0 = np.asarray(prev_grid, dtype=np.int8)
         f1 = np.asarray(curr_grid, dtype=np.int8)
         diff = f0 != f1
@@ -152,22 +154,45 @@ class ObservationProcessor:
             samples.append(f"({r},{c}):{int(f0[r,c])}->{int(f1[r,c])}")
         return f"n_px={len(rs)} [" + ", ".join(samples) + "]"
 
-    def compute_delta_omega(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> int:
+    def compute_delta_omega(
+        self,
+        prev_grid: np.ndarray,
+        curr_grid: np.ndarray,
+        hud_mask: Optional[np.ndarray] = None,
+    ) -> int:
         a = np.asarray(prev_grid, dtype=np.int8)
         b = np.asarray(curr_grid, dtype=np.int8)
         if a.shape != b.shape:
             return 0
+        diff = a != b
+        if hud_mask is not None and hud_mask.shape == diff.shape:
+            diff = diff & (~hud_mask)
+            return int(np.sum(diff))
         h, w = a.shape
         if h >= 16 and w >= 16:
             bz = self.bezel_px
-            return int(np.sum(a[bz:h - bz, bz:w - bz] != b[bz:h - bz, bz:w - bz]))
-        return int(np.sum(a != b))
+            return int(np.sum(diff[bz:h - bz, bz:w - bz]))
+        return int(np.sum(diff))
+
+    def analyze_animation_frames(self, frame_sequence: List[np.ndarray]) -> Dict[str, bool]:
+        """
+        Inspects intermediate non-interactive animation frames emitted by ARCEngine
+        to detect continuous sliding, gravity cascades, or multi-step chain reactions.
+        """
+        info = {"has_cascade": False, "is_continuous_slide": False}
+        if not frame_sequence or len(frame_sequence) <= 1:
+            return info
+        info["has_cascade"] = True
+        if len(frame_sequence) >= 3:
+            info["is_continuous_slide"] = True
+        return info
 
     def infer_rigid_translation(
         self,
         prev_grid: np.ndarray,
         curr_grid: np.ndarray,
         known_avatar_colors: Optional[Set[int]] = None,
+        hud_mask: Optional[np.ndarray] = None,
     ) -> Optional[Tuple[int, Set[int], Tuple[int, int], Tuple[float, float], Set[int], List[Tuple[int, int]]]]:
         """
         Universal Rigid-Body Differential Tracker + Remote Causal Trigger Detector.
@@ -180,7 +205,9 @@ class ObservationProcessor:
             return None
         h, w = f0.shape
         diff = f0 != f1
-        if h >= 16 and w >= 16:
+        if hud_mask is not None and hud_mask.shape == diff.shape:
+            diff = diff & (~hud_mask)
+        elif h >= 16 and w >= 16:
             bz = self.bezel_px
             mask = np.zeros((h, w), dtype=bool)
             mask[bz:h - bz, bz:w - bz] = True

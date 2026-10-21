@@ -10,16 +10,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 
-from project_override.core.dead_signature import DeadSignatureTable, compute_arena_hash
+from project_override.core.dead_signature import DeadSignatureTable, DynamicHUDMasker, compute_arena_hash
 from project_override.world_model.ast_sandbox import ASTSandbox
 
 logger = logging.getLogger(__name__)
 
 
 def _install_pure_pytorch_awq_fallback() -> None:
-    """
-    Fast uint8-unpacked GPU 4-bit AWQ dequantizer for Kaggle's offline Python 3.13 container.
-    """
+    """Fast uint8-unpacked GPU 4-bit AWQ dequantizer for Kaggle's offline Python 3.13 container."""
     try:
         import awq  # noqa: F401
         return
@@ -209,7 +207,7 @@ class OfflineLLMRuntime:
                 self.is_loaded = False
                 return False
 
-    def generate_text(self, prompt: str, max_new_tokens: int = 190, timeout_s: float = 14.0) -> Optional[str]:
+    def generate_text(self, prompt: str, max_new_tokens: int = 210, timeout_s: float = 14.0) -> Optional[str]:
         if not self.ensure_loaded():
             return None
         if not self._INFERENCE_LOCK.acquire(timeout=2.0):
@@ -243,7 +241,7 @@ class OfflineLLMRuntime:
             self._INFERENCE_LOCK.release()
 
     def infer_subgoal(self, prompt: str) -> Optional[Dict[str, Any]]:
-        resp = self.generate_text(prompt, max_new_tokens=110)
+        resp = self.generate_text(prompt, max_new_tokens=150)
         if not resp:
             return None
         match = re.search(r"\{.*\}", resp, re.DOTALL)
@@ -257,28 +255,44 @@ class OfflineLLMRuntime:
 
 class RetrodictWorldModelSynthesizer:
     """
-    6-Archetype CEGIS World Model Engine + Multi-Turn Qwen 32B AWQ Code Refinement
-    + Best-First Width Search (BFWS / IW(2)) Simulated Planner.
+    Tycho Rendered Deterministic Moore Machine + Auto-Triggered Model Repair (arXiv:2607.28287)
+    + 8-Archetype CEGIS Program Bank + Best-First Width Search (BFWS / IW(2)).
     """
 
     def __init__(self):
         self.transitions: List[Tuple[np.ndarray, int, Dict[str, Any], np.ndarray]] = []
         self.verified_fn: Optional[Callable] = None
         self.verified_code: Optional[str] = None
+        self.verified_accuracy: float = 0.0
+        self.needs_repair: bool = False
 
     def reset_level(self, keep_verified: bool = True) -> None:
         self.transitions.clear()
+        self.needs_repair = False
         if not keep_verified:
             self.verified_fn = None
             self.verified_code = None
+            self.verified_accuracy = 0.0
 
     def record_transition(
-        self, pre_grid: np.ndarray, action_id: int, data: Dict[str, Any], post_grid: np.ndarray
+        self,
+        pre_grid: np.ndarray,
+        action_id: int,
+        data: Dict[str, Any],
+        post_grid: np.ndarray,
+        hud_mask: Optional[np.ndarray] = None,
     ) -> None:
         if not np.array_equal(pre_grid, post_grid):
             self.transitions.append((pre_grid.copy(), int(action_id), dict(data or {}), post_grid.copy()))
             if len(self.transitions) > 20:
                 self.transitions.pop(0)
+            # Tycho Auto-Triggered Repair: check if active model mispredicts this new transition
+            if self.verified_fn is not None:
+                acc, _ = ASTSandbox.evaluate_retrodiction(
+                    self.verified_fn, [self.transitions[-1]], hud_mask=hud_mask
+                )
+                if acc < 1.0:
+                    self.needs_repair = True
 
     def _build_archetype_candidates(
         self,
@@ -294,13 +308,10 @@ class RetrodictWorldModelSynthesizer:
         bx_repr = repr(set(int(c) for c in box_colors))
         vc_repr = repr(vectors)
 
-        # 1. Cardinal + Sokoban Multi-Box Push
+        # 1. Cardinal + Sokoban Multi-Box Push + Action-5 Brush Stamp
         c1_cardinal = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
-    if action not in vecs:
-        return grid
-    dr, dc = vecs[action]
     floor_c = {fl}
     av_cols = {av_repr}
     wall_cols = {wl_repr}
@@ -311,6 +322,18 @@ def predict_next_grid(grid, action, data=None):
     pts = np.argwhere(mask)
     if len(pts) == 0:
         return grid
+    if action == 5:
+        nxt = grid.copy()
+        r0, c0 = int(pts[:, 0].mean()), int(pts[:, 1].mean())
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                nr, nc = r0 + dr, c0 + dc
+                if 4 <= nr < h - 4 and 4 <= nc < w - 4 and int(nxt[nr, nc]) == floor_c:
+                    nxt[nr, nc] = min(av_cols)
+        return nxt
+    if action not in vecs:
+        return grid
+    dr, dc = vecs[action]
     for r, c in pts:
         nr, nc = int(r + dr), int(c + dc)
         if not (4 <= nr < h - 4 and 4 <= nc < w - 4):
@@ -329,7 +352,7 @@ def predict_next_grid(grid, action, data=None):
         nxt[nr, nc] = grid[int(r), int(c)]
     return nxt
 """
-        # 2. Toroidal Modulo Wrap-Around
+        # 2. Toroidal Modulo Wrap-Around Arena
         c2_toroidal = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
@@ -422,7 +445,6 @@ def predict_next_grid(grid, action, data=None):
         nxt[int(r), int(c)] = floor_c
     for r, c in pts:
         nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
-    # Apply downward gravity settle
     for _ in range(4):
         pts2 = np.argwhere(np.isin(nxt, list(av_cols)))
         can_fall = len(pts2) > 0 and all(
@@ -447,6 +469,7 @@ def predict_next_grid(grid, action, data=None):
         wall_colors: Set[int],
         box_colors: Set[int],
         vectors: Dict[int, Tuple[int, int]],
+        hud_mask: Optional[np.ndarray] = None,
     ) -> Optional[Callable]:
         if floor_color is None or not avatar_colors or not vectors:
             return None
@@ -462,7 +485,7 @@ def predict_next_grid(grid, action, data=None):
             fn = ASTSandbox.validate_and_compile(code_cand)
             if fn is not None:
                 if len(self.transitions) >= 2:
-                    acc, ce = ASTSandbox.evaluate_retrodiction(fn, self.transitions)
+                    acc, ce = ASTSandbox.evaluate_retrodiction(fn, self.transitions, hud_mask=hud_mask)
                     if acc > best_acc:
                         best_acc = acc
                         best_fn = fn
@@ -471,10 +494,13 @@ def predict_next_grid(grid, action, data=None):
                     if acc >= 0.90:
                         self.verified_fn = fn
                         self.verified_code = code_cand
+                        self.verified_accuracy = acc
+                        self.needs_repair = False
                         return fn
                 elif best_fn is None:
                     best_fn = fn
                     best_code = code_cand
+                    best_acc = 0.5
 
         # Multi-Turn Qwen 2.5 Coder 32B AWQ CEGIS Refinement for Alien Mechanics
         llm = OfflineLLMRuntime.get_instance()
@@ -496,7 +522,7 @@ def predict_next_grid(grid, action, data=None):
                 cand_code = m.group(1).strip() if m else resp.strip()
                 llm_fn = ASTSandbox.validate_and_compile(cand_code)
                 if llm_fn is not None:
-                    acc2, ce2 = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions)
+                    acc2, ce2 = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions, hud_mask=hud_mask)
                     if acc2 > best_acc:
                         best_acc = acc2
                         best_fn = llm_fn
@@ -504,12 +530,16 @@ def predict_next_grid(grid, action, data=None):
                     if acc2 >= 0.85:
                         self.verified_fn = llm_fn
                         self.verified_code = cand_code
+                        self.verified_accuracy = acc2
+                        self.needs_repair = False
                         return llm_fn
                     curr_ce = ce2
 
         if best_fn is not None:
             self.verified_fn = best_fn
             self.verified_code = best_code
+            self.verified_accuracy = max(0.0, best_acc)
+            self.needs_repair = False
         return best_fn
 
     def plan_iw_lookahead(
@@ -519,12 +549,13 @@ def predict_next_grid(grid, action, data=None):
         target_pos: Optional[Tuple[int, int]],
         avatar_colors: Set[int],
         dead_table: Optional[DeadSignatureTable] = None,
+        hud_masker: Optional[DynamicHUDMasker] = None,
         level_idx: int = 0,
         max_expansions: int = 160,
     ) -> Optional[List[int]]:
         """
-        Best-First Width Search (BFWS) combining IW(1) + IW(2) Novelty with Goal-Distance Heuristic
-        and Dead/Hazard Signature Pruning over the verified Python world model.
+        Replay-Audited Best-First Width Search (BFWS) combining IW(1) + IW(2) Novelty
+        with Goal-Distance Heuristic and Dead/Hazard Signature Pruning.
         """
         if self.verified_fn is None or not avatar_colors:
             return None
@@ -565,7 +596,7 @@ def predict_next_grid(grid, action, data=None):
             expansions += 1
             if len(path) >= 16:
                 continue
-            g_hash = compute_arena_hash(g, bezel_px=4) if dead_table is not None else 0
+            g_hash = compute_arena_hash(g, bezel_px=4, hud_masker=hud_masker) if dead_table is not None else 0
             for a in moves:
                 if dead_table is not None and dead_table.is_dead(g_hash, a, 0, 0, level_idx):
                     continue
