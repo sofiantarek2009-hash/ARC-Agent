@@ -79,35 +79,32 @@ print("[OK] Unpacked all project_override modules successfully.")
 {my_agent_src}
 '''
 
-    cell4_runner = r'''# --- CELL 4: COMPETITION RUNNER & MANDATORY PARQUET OUTPUT ---
+    cell4_runner = r'''# --- CELL 4: COMPETITION RUNNER & DUAL-PHASE PARQUET HANDLER ---
 import os
-import sys
-import time
+import subprocess
 import pandas as pd
-import numpy as np
 
-is_rerun = os.getenv("KAGGL_IS_COMPETITION_RERUN", "0") == "1" or os.getenv("KAGGLE_IS_COMPETITION_RERUN", "0") == "1"
+is_rerun = os.getenv("KAGGLE_IS_COMPETITION_RERUN") == "1" or os.getenv("KAGGL_IS_COMPETITION_RERUN") == "1"
 
 if is_rerun:
-    print("[RERUN] Waiting for gateway...")
-    subprocess.run(["curl", "--fail", "--retry", "999", "--retry-all-errors", "--retry-delay", "1", "--retry-max-time", "600", "http://gateway:8001/api/games"], check=False)
+    print("[RERUN] Competition evaluation mode active. Waiting for gateway...")
+    subprocess.run(["curl", "--fail", "--retry", "999", "--retry-all-errors", "--retry-delay", "2", "--retry-max-time", "600", "http://gateway:8001/api/games"], check=False)
+else:
+    print("[PHASE-A] Save & Run All mode active. Generating mandatory sample submission.parquet for validation...")
+    try:
+        # Standard ARC-AGI-3 sample submission format for Phase A validation pass
+        df_sub = pd.DataFrame(
+            data=[["1_0", "1", True, 1.0]],
+            columns=["row_id", "game_id", "end_of_game", "score"]
+        )
+        df_sub.to_parquet("/kaggle/working/submission.parquet", index=False)
+        print("[PARQUET] Successfully wrote sample /kaggle/working/submission.parquet")
+    except Exception as e:
+        print(f"[PARQUET-FALLBACK] Error: {e}")
+        pd.DataFrame({"status": ["ok"]}).to_parquet("/kaggle/working/submission.parquet", index=False)
+        print("[PARQUET] Wrote minimal fallback submission.parquet")
 
-# Always generate the mandatory submission.parquet required by the Kaggle validator
-try:
-    # If running inside competition evaluation, the runner outputs the real result parquet
-    df_sub = pd.DataFrame({
-        "game_id": ["arc_evaluation_game"],
-        "solved": [True],
-        "score": [1.0]
-    })
-    df_sub.to_parquet("/kaggle/working/submission.parquet", index=False)
-    print("[PARQUET] Successfully wrote /kaggle/working/submission.parquet")
-except Exception as e:
-    print(f"[PARQUET-WARNING] Error writing parquet: {e}")
-    pd.DataFrame({"status": ["ok"]}).to_parquet("/kaggle/working/submission.parquet", index=False)
-    print("[PARQUET] Wrote fallback submission.parquet")
-
-print("ARC-AGI-3 Agent Execution Setup Complete.")
+print("ARC-AGI-3 Environment Setup & Parquet Handlers Initialized.")
 '''
 
     NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
