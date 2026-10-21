@@ -4,8 +4,6 @@ from project_override.core.visual_goal_induction import DihedralSymmetrySolver
 
 
 class GF2ToggleSolver:
-    """GF(2) Gauss-Jordan Linear Toggle / Lights-Out Solver with Live Auto-Solve Queueing."""
-
     def __init__(self):
         self.click_effects: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
         self.cell_stride: int = 8

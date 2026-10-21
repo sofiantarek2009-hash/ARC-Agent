@@ -1,4 +1,3 @@
-from collections import deque
 import heapq
 import json
 import logging
@@ -17,13 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def _install_pure_pytorch_awq_fallback() -> None:
-    """Fast uint8-unpacked GPU 4-bit AWQ dequantizer for Kaggle's offline Python 3.13 container."""
     try:
         import awq  # noqa: F401
         return
     except ImportError:
         pass
-
     try:
         import torch
         import torch.nn as nn
@@ -35,47 +32,18 @@ def _install_pure_pytorch_awq_fallback() -> None:
                 self.in_features = in_features
                 self.out_features = out_features
                 self.group_size = group_size
-                pack_num = 8
-                self.register_buffer(
-                    "qweight",
-                    torch.zeros((in_features, out_features // pack_num), dtype=torch.int32),
-                )
-                self.register_buffer(
-                    "qzeros",
-                    torch.zeros((in_features // group_size, out_features // pack_num), dtype=torch.int32),
-                )
-                self.register_buffer(
-                    "scales",
-                    torch.zeros((in_features // group_size, out_features), dtype=torch.float16),
-                )
-                if bias:
-                    self.register_buffer("bias", torch.zeros((out_features,), dtype=torch.float16))
-                else:
-                    self.bias = None
-                self.register_buffer(
-                    "_shifts",
-                    torch.tensor([0, 16, 4, 20, 8, 24, 12, 28], dtype=torch.int32).view(1, 1, 8),
-                    persistent=False,
-                )
+                self.register_buffer("qweight", torch.zeros((in_features, out_features // 8), dtype=torch.int32))
+                self.register_buffer("qzeros", torch.zeros((in_features // group_size, out_features // 8), dtype=torch.int32))
+                self.register_buffer("scales", torch.zeros((in_features // group_size, out_features), dtype=torch.float16))
+                self.register_buffer("bias", torch.zeros((out_features,), dtype=torch.float16)) if bias else setattr(self, "bias", None)
+                self.register_buffer("_shifts", torch.tensor([0, 16, 4, 20, 8, 24, 12, 28], dtype=torch.int32).view(1, 1, 8), persistent=False)
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
-                w_unpacked = (
-                    torch.bitwise_and(torch.bitwise_right_shift(self.qweight.unsqueeze(-1), self._shifts), 0x0F)
-                    .to(torch.uint8)
-                    .reshape(self.in_features, self.out_features)
-                )
-                z_unpacked = (
-                    torch.bitwise_and(torch.bitwise_right_shift(self.qzeros.unsqueeze(-1), self._shifts), 0x0F)
-                    .to(torch.uint8)
-                    .reshape(self.in_features // self.group_size, self.out_features)
-                )
-                z_expanded = z_unpacked.repeat_interleave(self.group_size, dim=0)
-                s_expanded = self.scales.repeat_interleave(self.group_size, dim=0)
-                w_fp16 = (w_unpacked.to(torch.float16) - z_expanded.to(torch.float16)) * s_expanded
+                w = torch.bitwise_and(torch.bitwise_right_shift(self.qweight.unsqueeze(-1), self._shifts), 0x0F).to(torch.uint8).reshape(self.in_features, self.out_features)
+                z = torch.bitwise_and(torch.bitwise_right_shift(self.qzeros.unsqueeze(-1), self._shifts), 0x0F).to(torch.uint8).reshape(self.in_features // self.group_size, self.out_features)
+                w_fp16 = (w.to(torch.float16) - z.repeat_interleave(self.group_size, dim=0).to(torch.float16)) * self.scales.repeat_interleave(self.group_size, dim=0)
                 out = torch.matmul(x.to(torch.float16), w_fp16)
-                if self.bias is not None:
-                    out = out + self.bias
-                return out.to(x.dtype)
+                return (out + self.bias if self.bias is not None else out).to(x.dtype)
 
         class PureTorchAwqQuantizer(HfQuantizer):
             requires_calibration = False
@@ -95,18 +63,8 @@ def _install_pure_pytorch_awq_fallback() -> None:
                 def _replace(module: nn.Module, prefix: str = "") -> None:
                     for name, child in list(module.named_children()):
                         full = f"{prefix}.{name}" if prefix else name
-                        if isinstance(child, nn.Linear) and "lm_head" not in full:
-                            if child.in_features % self.group_size == 0 and child.out_features % 8 == 0:
-                                setattr(
-                                    module,
-                                    name,
-                                    TorchAWQLinear(
-                                        child.in_features,
-                                        child.out_features,
-                                        bias=child.bias is not None,
-                                        group_size=self.group_size,
-                                    ),
-                                )
+                        if isinstance(child, nn.Linear) and "lm_head" not in full and child.in_features % self.group_size == 0 and child.out_features % 8 == 0:
+                            setattr(module, name, TorchAWQLinear(child.in_features, child.out_features, bias=child.bias is not None, group_size=self.group_size))
                         else:
                             _replace(child, full)
                 _replace(model)
@@ -128,8 +86,6 @@ def _install_pure_pytorch_awq_fallback() -> None:
 
 
 class OfflineLLMRuntime:
-    """Thread-safe Singleton for Qwen 2.5 Coder 32B Instruct AWQ on Kaggle Dual T4."""
-
     _INSTANCE: Optional["OfflineLLMRuntime"] = None
     _LOAD_LOCK = threading.Lock()
     _INFERENCE_LOCK = threading.Lock()
@@ -184,20 +140,11 @@ class OfflineLLMRuntime:
                     return False
                 _install_pure_pytorch_awq_fallback()
                 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_path, trust_remote_code=True, local_files_only=True
-                )
-                n_gpus = torch.cuda.device_count()
-                max_mem = {i: "14GiB" for i in range(n_gpus)}
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True, local_files_only=True)
+                max_mem = {i: "14GiB" for i in range(torch.cuda.device_count())}
                 max_mem["cpu"] = "24GiB"
                 self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_path,
-                    device_map="auto",
-                    max_memory=max_mem,
-                    torch_dtype=torch.float16,
-                    trust_remote_code=True,
-                    local_files_only=True,
+                    self.model_path, device_map="auto", max_memory=max_mem, torch_dtype=torch.float16, trust_remote_code=True, local_files_only=True
                 )
                 self.model.eval()
                 self.is_loaded = True
@@ -208,9 +155,7 @@ class OfflineLLMRuntime:
                 return False
 
     def generate_text(self, prompt: str, max_new_tokens: int = 210, timeout_s: float = 14.0) -> Optional[str]:
-        if not self.ensure_loaded():
-            return None
-        if not self._INFERENCE_LOCK.acquire(timeout=2.0):
+        if not self.ensure_loaded() or not self._INFERENCE_LOCK.acquire(timeout=2.0):
             return None
         try:
             import torch
@@ -218,21 +163,10 @@ class OfflineLLMRuntime:
             if (time.perf_counter() - t0) > timeout_s:
                 return None
             messages = [{"role": "user", "content": prompt}]
-            if hasattr(self.tokenizer, "apply_chat_template"):
-                text = self.tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-            else:
-                text = prompt
+            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) if hasattr(self.tokenizer, "apply_chat_template") else prompt
             inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
             with torch.no_grad():
-                out = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    do_sample=False,
-                    use_cache=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                )
+                out = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, use_cache=True, pad_token_id=self.tokenizer.eos_token_id)
             gen_ids = out[0][inputs["input_ids"].shape[1]:]
             return self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
         except Exception:
@@ -241,7 +175,7 @@ class OfflineLLMRuntime:
             self._INFERENCE_LOCK.release()
 
     def infer_subgoal(self, prompt: str) -> Optional[Dict[str, Any]]:
-        resp = self.generate_text(prompt, max_new_tokens=150)
+        resp = self.generate_text(prompt, max_new_tokens=160)
         if not resp:
             return None
         match = re.search(r"\{.*\}", resp, re.DOTALL)
@@ -254,11 +188,6 @@ class OfflineLLMRuntime:
 
 
 class RetrodictWorldModelSynthesizer:
-    """
-    Tycho Rendered Deterministic Moore Machine + Auto-Triggered Model Repair (arXiv:2607.28287)
-    + 8-Archetype CEGIS Program Bank + Best-First Width Search (BFWS / IW(2)).
-    """
-
     def __init__(self):
         self.transitions: List[Tuple[np.ndarray, int, Dict[str, Any], np.ndarray]] = []
         self.verified_fn: Optional[Callable] = None
@@ -284,13 +213,10 @@ class RetrodictWorldModelSynthesizer:
     ) -> None:
         if not np.array_equal(pre_grid, post_grid):
             self.transitions.append((pre_grid.copy(), int(action_id), dict(data or {}), post_grid.copy()))
-            if len(self.transitions) > 20:
+            if len(self.transitions) > 24:
                 self.transitions.pop(0)
-            # Tycho Auto-Triggered Repair: check if active model mispredicts this new transition
             if self.verified_fn is not None:
-                acc, _ = ASTSandbox.evaluate_retrodiction(
-                    self.verified_fn, [self.transitions[-1]], hud_mask=hud_mask
-                )
+                acc, _ = ASTSandbox.evaluate_retrodiction(self.verified_fn, [self.transitions[-1]], hud_mask=hud_mask)
                 if acc < 1.0:
                     self.needs_repair = True
 
@@ -301,27 +227,26 @@ class RetrodictWorldModelSynthesizer:
         wall_colors: Set[int],
         box_colors: Set[int],
         vectors: Dict[int, Tuple[int, int]],
+        portals: Optional[Dict[Tuple[int, int], Tuple[int, int]]] = None,
+        key_to_door_colors: Optional[Dict[int, Set[int]]] = None,
     ) -> List[str]:
         fl = int(floor_color)
         av_repr = repr(set(int(c) for c in avatar_colors))
         wl_repr = repr(set(int(c) for c in wall_colors))
         bx_repr = repr(set(int(c) for c in box_colors))
         vc_repr = repr(vectors)
+        pt_repr = repr(dict(portals or {}))
+        kd_repr = repr({int(k): list(v) for k, v in (key_to_door_colors or {}).items()})
 
-        # 1. Cardinal + Sokoban Multi-Box Push + Action-5 Brush Stamp
         c1_cardinal = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
-    floor_c = {fl}
-    av_cols = {av_repr}
-    wall_cols = {wl_repr}
-    box_cols = {bx_repr}
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}; box_cols = {bx_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
     pts = np.argwhere(mask)
-    if len(pts) == 0:
-        return grid
+    if len(pts) == 0: return grid
     if action == 5:
         nxt = grid.copy()
         r0, c0 = int(pts[:, 0].mean()), int(pts[:, 1].mean())
@@ -331,18 +256,14 @@ def predict_next_grid(grid, action, data=None):
                 if 4 <= nr < h - 4 and 4 <= nc < w - 4 and int(nxt[nr, nc]) == floor_c:
                     nxt[nr, nc] = min(av_cols)
         return nxt
-    if action not in vecs:
-        return grid
+    if action not in vecs: return grid
     dr, dc = vecs[action]
     for r, c in pts:
         nr, nc = int(r + dr), int(c + dc)
-        if not (4 <= nr < h - 4 and 4 <= nc < w - 4):
-            return grid
-        if int(grid[nr, nc]) in wall_cols:
+        if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols:
             return grid
     nxt = grid.copy()
-    for r, c in pts:
-        nxt[int(r), int(c)] = floor_c
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
     for r, c in pts:
         nr, nc = int(r + dr), int(c + dc)
         if int(grid[nr, nc]) in box_cols:
@@ -352,115 +273,128 @@ def predict_next_grid(grid, action, data=None):
         nxt[nr, nc] = grid[int(r), int(c)]
     return nxt
 """
-        # 2. Toroidal Modulo Wrap-Around Arena
         c2_toroidal = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
-    if action not in vecs:
-        return grid
+    if action not in vecs: return grid
     dr, dc = vecs[action]
-    floor_c = {fl}
-    av_cols = {av_repr}
-    wall_cols = {wl_repr}
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
     pts = np.argwhere(mask)
-    if len(pts) == 0:
-        return grid
+    if len(pts) == 0: return grid
     nxt = grid.copy()
     for r, c in pts:
         nr = 4 + ((int(r + dr) - 4) % (h - 8))
         nc = 4 + ((int(c + dc) - 4) % (w - 8))
-        if int(grid[nr, nc]) in wall_cols:
-            return grid
-    for r, c in pts:
-        nxt[int(r), int(c)] = floor_c
+        if int(grid[nr, nc]) in wall_cols: return grid
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
     for r, c in pts:
         nr = 4 + ((int(r + dr) - 4) % (h - 8))
         nc = 4 + ((int(c + dc) - 4) % (w - 8))
         nxt[nr, nc] = grid[int(r), int(c)]
     return nxt
 """
-        # 3. Ice-Slide Continuous Raycast
         c3_slide = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
-    if action not in vecs:
-        return grid
+    if action not in vecs: return grid
     dr, dc = vecs[action]
     ur = 0 if dr == 0 else (1 if dr > 0 else -1)
     uc = 0 if dc == 0 else (1 if dc > 0 else -1)
-    floor_c = {fl}
-    av_cols = {av_repr}
-    wall_cols = {wl_repr}
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
     pts = np.argwhere(mask)
-    if len(pts) == 0:
-        return grid
+    if len(pts) == 0: return grid
     k = 0
     while k < 56:
-        blocked = False
-        for r, c in pts:
-            nr, nc = int(r + ur * (k + 1)), int(c + uc * (k + 1))
-            if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols:
-                blocked = True
-                break
-        if blocked:
+        if any(not (4 <= int(r + ur * (k + 1)) < h - 4 and 4 <= int(c + uc * (k + 1)) < w - 4) or int(grid[int(r + ur * (k + 1)), int(c + uc * (k + 1))]) in wall_cols for r, c in pts):
             break
         k += 1
-    if k == 0:
-        return grid
+    if k == 0: return grid
     nxt = grid.copy()
-    for r, c in pts:
-        nxt[int(r), int(c)] = floor_c
-    for r, c in pts:
-        nxt[int(r + ur * k), int(c + uc * k)] = grid[int(r), int(c)]
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
+    for r, c in pts: nxt[int(r + ur * k), int(c + uc * k)] = grid[int(r), int(c)]
     return nxt
 """
-        # 4. Gravity / Falling-Sand Cascade after Move
         c4_gravity = f"""
 def predict_next_grid(grid, action, data=None):
     vecs = {vc_repr}
-    if action not in vecs:
-        return grid
+    if action not in vecs: return grid
     dr, dc = vecs[action]
-    floor_c = {fl}
-    av_cols = {av_repr}
-    wall_cols = {wl_repr}
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
     pts = np.argwhere(mask)
-    if len(pts) == 0:
-        return grid
+    if len(pts) == 0: return grid
     for r, c in pts:
         nr, nc = int(r + dr), int(c + dc)
-        if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols:
-            return grid
+        if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols: return grid
     nxt = grid.copy()
-    for r, c in pts:
-        nxt[int(r), int(c)] = floor_c
-    for r, c in pts:
-        nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
+    for r, c in pts: nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
     for _ in range(4):
         pts2 = np.argwhere(np.isin(nxt, list(av_cols)))
-        can_fall = len(pts2) > 0 and all(
-            int(r + 1) < h - 4 and (int(nxt[int(r + 1), int(c)]) == floor_c or int(nxt[int(r + 1), int(c)]) in av_cols)
-            for r, c in pts2
-        )
-        if not can_fall:
+        if len(pts2) == 0 or not all(int(r + 1) < h - 4 and (int(nxt[int(r + 1), int(c)]) == floor_c or int(nxt[int(r + 1), int(c)]) in av_cols) for r, c in pts2):
             break
         prev_nxt = nxt.copy()
-        for r, c in pts2:
-            nxt[int(r), int(c)] = floor_c
-        for r, c in pts2:
-            nxt[int(r + 1), int(c)] = prev_nxt[int(r), int(c)]
+        for r, c in pts2: nxt[int(r), int(c)] = floor_c
+        for r, c in pts2: nxt[int(r + 1), int(c)] = prev_nxt[int(r), int(c)]
     return nxt
 """
-        return [c1_cardinal, c2_toroidal, c3_slide, c4_gravity]
+        c5_portal = f"""
+def predict_next_grid(grid, action, data=None):
+    vecs = {vc_repr}; portals = {pt_repr}
+    if action not in vecs: return grid
+    dr, dc = vecs[action]
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}
+    h, w = grid.shape
+    mask = np.isin(grid, list(av_cols))
+    mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
+    pts = np.argwhere(mask)
+    if len(pts) == 0: return grid
+    r0, c0 = int(round(float(pts[:, 0].mean()))), int(round(float(pts[:, 1].mean())))
+    nr, nc = r0 + dr, c0 + dc
+    for p_in, p_out in portals.items():
+        if abs(nr - p_in[0]) <= 2 and abs(nc - p_in[1]) <= 2:
+            dr = p_out[0] - r0; dc = p_out[1] - c0; break
+    nxt = grid.copy()
+    for r, c in pts:
+        tr, tc = int(r + dr), int(c + dc)
+        if not (4 <= tr < h - 4 and 4 <= tc < w - 4) or int(grid[tr, tc]) in wall_cols: return grid
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
+    for r, c in pts: nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
+    return nxt
+"""
+        c6_key_door = f"""
+def predict_next_grid(grid, action, data=None):
+    vecs = {vc_repr}; kd_map = {kd_repr}
+    if action not in vecs: return grid
+    dr, dc = vecs[action]
+    floor_c = {fl}; av_cols = {av_repr}; wall_cols = {wl_repr}
+    h, w = grid.shape
+    mask = np.isin(grid, list(av_cols))
+    mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
+    pts = np.argwhere(mask)
+    if len(pts) == 0: return grid
+    stepped_colors = set()
+    for r, c in pts:
+        nr, nc = int(r + dr), int(c + dc)
+        if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols: return grid
+        stepped_colors.add(int(grid[nr, nc]))
+    nxt = grid.copy()
+    for sc in stepped_colors:
+        if sc in kd_map:
+            for door_c in kd_map[sc]: nxt[nxt == door_c] = floor_c
+    for r, c in pts: nxt[int(r), int(c)] = floor_c
+    for r, c in pts: nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
+    return nxt
+"""
+        return [c1_cardinal, c2_toroidal, c3_slide, c4_gravity, c5_portal, c6_key_door]
 
     def synthesize_world_model(
         self,
@@ -470,48 +404,43 @@ def predict_next_grid(grid, action, data=None):
         box_colors: Set[int],
         vectors: Dict[int, Tuple[int, int]],
         hud_mask: Optional[np.ndarray] = None,
+        portals: Optional[Dict[Tuple[int, int], Tuple[int, int]]] = None,
+        key_to_door_colors: Optional[Dict[int, Set[int]]] = None,
     ) -> Optional[Callable]:
         if floor_color is None or not avatar_colors or not vectors:
             return None
-
-        best_fn = None
-        best_acc = -1.0
+        incumbent_acc = -1.0
+        if self.verified_fn is not None and len(self.transitions) >= 2:
+            incumbent_acc, _ = ASTSandbox.evaluate_retrodiction(self.verified_fn, self.transitions, hud_mask=hud_mask)
+        best_fn = self.verified_fn
+        best_acc = incumbent_acc
         best_ce = None
-        best_code = None
+        best_code = self.verified_code
 
         for code_cand in self._build_archetype_candidates(
-            floor_color, avatar_colors, wall_colors, box_colors, vectors
+            floor_color, avatar_colors, wall_colors, box_colors, vectors, portals=portals, key_to_door_colors=key_to_door_colors
         ):
             fn = ASTSandbox.validate_and_compile(code_cand)
             if fn is not None:
                 if len(self.transitions) >= 2:
                     acc, ce = ASTSandbox.evaluate_retrodiction(fn, self.transitions, hud_mask=hud_mask)
                     if acc > best_acc:
-                        best_acc = acc
-                        best_fn = fn
-                        best_ce = ce
-                        best_code = code_cand
-                    if acc >= 0.90:
-                        self.verified_fn = fn
-                        self.verified_code = code_cand
-                        self.verified_accuracy = acc
-                        self.needs_repair = False
+                        best_acc = acc; best_fn = fn; best_ce = ce; best_code = code_cand
+                    if acc >= 0.92:
+                        self.verified_fn = fn; self.verified_code = code_cand; self.verified_accuracy = acc; self.needs_repair = False
                         return fn
                 elif best_fn is None:
-                    best_fn = fn
-                    best_code = code_cand
-                    best_acc = 0.5
+                    best_fn = fn; best_code = code_cand; best_acc = 0.5
 
-        # Multi-Turn Qwen 2.5 Coder 32B AWQ CEGIS Refinement for Alien Mechanics
         llm = OfflineLLMRuntime.get_instance()
         if llm.ensure_loaded() and len(self.transitions) >= 2:
             curr_ce = best_ce
             for _ in range(2):
                 cegis_prompt = (
                     "Write ONLY a pure Python function `def predict_next_grid(grid, action, data=None):` "
-                    "using `np` (no imports) that predicts the next 64x64 int8 grid.\n"
+                    "using `np` (no imports) that predicts the next 64x64 int8 grid (may set uncertain HUD cells to -1).\n"
                     f"Induced parameters: floor={floor_color}, avatar={avatar_colors}, walls={wall_colors}, "
-                    f"boxes={box_colors}, vectors={vectors}.\n"
+                    f"boxes={box_colors}, vectors={vectors}, portals={portals}.\n"
                     f"Counterexample on current model: {curr_ce}\n"
                     "Return ONLY valid Python code inside ```python ... ```."
                 )
@@ -524,22 +453,14 @@ def predict_next_grid(grid, action, data=None):
                 if llm_fn is not None:
                     acc2, ce2 = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions, hud_mask=hud_mask)
                     if acc2 > best_acc:
-                        best_acc = acc2
-                        best_fn = llm_fn
-                        best_code = cand_code
-                    if acc2 >= 0.85:
-                        self.verified_fn = llm_fn
-                        self.verified_code = cand_code
-                        self.verified_accuracy = acc2
-                        self.needs_repair = False
+                        best_acc = acc2; best_fn = llm_fn; best_code = cand_code
+                    if acc2 >= 0.85 and acc2 >= incumbent_acc:
+                        self.verified_fn = llm_fn; self.verified_code = cand_code; self.verified_accuracy = acc2; self.needs_repair = False
                         return llm_fn
                     curr_ce = ce2
 
         if best_fn is not None:
-            self.verified_fn = best_fn
-            self.verified_code = best_code
-            self.verified_accuracy = max(0.0, best_acc)
-            self.needs_repair = False
+            self.verified_fn = best_fn; self.verified_code = best_code; self.verified_accuracy = max(0.0, best_acc); self.needs_repair = False
         return best_fn
 
     def plan_iw_lookahead(
@@ -553,16 +474,11 @@ def predict_next_grid(grid, action, data=None):
         level_idx: int = 0,
         max_expansions: int = 160,
     ) -> Optional[List[int]]:
-        """
-        Replay-Audited Best-First Width Search (BFWS) combining IW(1) + IW(2) Novelty
-        with Goal-Distance Heuristic and Dead/Hazard Signature Pruning.
-        """
         if self.verified_fn is None or not avatar_colors:
             return None
         moves = [a for a in available_actions if a in (1, 2, 3, 4, 5)]
         if not moves:
             return None
-
         seen_atoms: Set[Tuple[int, int, int]] = set()
         seen_pairs: Set[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = set()
 
@@ -572,18 +488,18 @@ def predict_next_grid(grid, action, data=None):
             for r in range(4, g.shape[0] - 4, 3):
                 for c in range(4, g.shape[1] - 4, 3):
                     val = int(g[r, c])
+                    if val < 0:
+                        continue
                     atom = (r, c, val)
                     fg_atoms.append(atom)
                     if atom not in seen_atoms:
-                        seen_atoms.add(atom)
-                        nov += 2
+                        seen_atoms.add(atom); nov += 2
             if nov == 0 and len(fg_atoms) <= 48:
                 for i in range(0, len(fg_atoms), 2):
                     for j in range(i + 1, min(i + 4, len(fg_atoms))):
                         p = (fg_atoms[i], fg_atoms[j])
                         if p not in seen_pairs:
-                            seen_pairs.add(p)
-                            nov += 1
+                            seen_pairs.add(p); nov += 1
             return nov
 
         _evaluate_novelty(start_grid)
@@ -609,18 +525,15 @@ def predict_next_grid(grid, action, data=None):
                 new_path = path + [a]
                 if target_pos is not None:
                     tr, tc = target_pos
-                    if 0 <= tr < nxt_g.shape[0] and 0 <= tc < nxt_g.shape[1]:
-                        if int(nxt_g[tr, tc]) in avatar_colors:
-                            return new_path
+                    if 0 <= tr < nxt_g.shape[0] and 0 <= tc < nxt_g.shape[1] and int(nxt_g[tr, tc]) in avatar_colors:
+                        return new_path
                 nov = _evaluate_novelty(nxt_g)
                 if nov > 0:
                     dist_pen = 0.0
                     if target_pos is not None:
                         pts = np.argwhere(np.isin(nxt_g, list(avatar_colors)))
                         if len(pts) > 0:
-                            av_r, av_c = float(pts[:, 0].mean()), float(pts[:, 1].mean())
-                            dist_pen = (abs(av_r - target_pos[0]) + abs(av_c - target_pos[1])) * 0.15
-                    priority = len(new_path) + dist_pen - (nov * 1.5)
+                            dist_pen = (abs(float(pts[:, 0].mean()) - target_pos[0]) + abs(float(pts[:, 1].mean()) - target_pos[1])) * 0.15
                     tie_breaker += 1
-                    heapq.heappush(open_heap, (priority, tie_breaker, nxt_g, new_path))
+                    heapq.heappush(open_heap, (len(new_path) + dist_pen - (nov * 1.5), tie_breaker, nxt_g, new_path))
         return None

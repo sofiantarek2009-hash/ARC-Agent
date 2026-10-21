@@ -4,17 +4,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-class StateHistoryLog:
-    """
-    RGB-Agent Style State-Based Local History Log.
-    Persists every transition to a queryable in-memory & local JSONL history file so the agent
-    can grep past attempts, inspect state diffs, and avoid repeating failed hypotheses.
-    """
-
+class ProgrammaticMemoryEngine:
     def __init__(self, game_id: str = "arc_game"):
         self.game_id = game_id
         self.records: List[Dict[str, Any]] = []
-        self.log_path = Path(f"/tmp/arc_rgb_history_{game_id}.jsonl")
+        self.log_path = Path(f"/tmp/arc_prolong_{game_id}.jsonl")
 
     def reset_level(self) -> None:
         self.records.clear()
@@ -30,6 +24,7 @@ class StateHistoryLog:
         delta_omega: int,
         diff_summary: str,
         av_pos: Optional[Tuple[int, int]] = None,
+        remote_triggers: Optional[List[Tuple[int, int]]] = None,
     ) -> None:
         rec = {
             "step": int(step),
@@ -40,10 +35,11 @@ class StateHistoryLog:
             "post_hash": int(post_hash),
             "dOmega": int(delta_omega),
             "av_pos": list(av_pos) if av_pos else None,
+            "remote_triggers": [list(rt) for rt in (remote_triggers or [])],
             "diff": diff_summary,
         }
         self.records.append(rec)
-        if len(self.records) > 200:
+        if len(self.records) > 400:
             self.records.pop(0)
         try:
             with self.log_path.open("a", encoding="utf-8") as f:
@@ -56,27 +52,34 @@ class StateHistoryLog:
         matches = [r for r in reversed(self.records) if pat in json.dumps(r).lower()]
         return list(reversed(matches[:max_results]))
 
+    def find_causal_triggers(self) -> List[Dict[str, Any]]:
+        return [
+            r for r in self.records
+            if r.get("remote_triggers") or (r.get("action") in (5, 6, 7) and r.get("dOmega", 0) > 0)
+        ]
+
+    def query_state_action(self, state_hash: int) -> Dict[int, int]:
+        return {int(r["action"]): int(r["post_hash"]) for r in self.records if r["pre_hash"] == state_hash}
+
     def format_recent_table(self, n: int = 8) -> str:
-        lines = []
-        for r in self.records[-n:]:
-            lines.append(
-                f"t={r['step']} a={r['action']} xy={r['xy']} dOmega={r['dOmega']} av={r['av_pos']} {r['diff']}"
-            )
-        return "\n".join(lines)
+        return "\n".join(
+            f"t={r['step']} a={r['action']} xy={r['xy']} dOmega={r['dOmega']} av={r['av_pos']} trig={r['remote_triggers']} {r['diff']}"
+            for r in self.records[-n:]
+        )
+
+
+StateHistoryLog = ProgrammaticMemoryEngine
 
 
 class ContextManager:
-    """
-    4-Tier Memory + Franzen Hysteresis Context Compaction + RGB History Ledger.
-    """
-
-    SYSTEM_PREFIX = (
+    _RAW_PREFIX = (
         "You are the Project Override Neurosymbolic + CodeAct Architect for ARC-AGI-3.\n"
         "Grid is 64x64 int8 (0..15). Actions: 1=UP, 2=DOWN, 3=LEFT, 4=RIGHT, 5=INTERACT, "
         "6=CLICK(x=col,y=row), 7=UNDO/CYCLE.\n"
         'Respond ONLY with valid JSON: {"subgoal": "NAVIGATE"|"CLICK"|"ACTION"|"CODEACT", '
-        '"target_rc": [r, c], "click_xy": [x, y], "action_id": int, "code": str, "hypothesis": str}'
+        '"target_rc": [r, c], "click_xy": [x, y], "action_id": int, "code": str, "hypothesis": str}\n'
     )
+    SYSTEM_PREFIX = _RAW_PREFIX + (" " * ((64 - (len(_RAW_PREFIX) % 64)) % 64))
 
     def __init__(self, high_water_tokens: int = 1900, low_water_tokens: int = 1100, game_id: str = "arc"):
         self.high_water_tokens = high_water_tokens
@@ -84,7 +87,7 @@ class ContextManager:
         self.tier1_episodic: deque = deque(maxlen=24)
         self.tier2_summaries: List[str] = []
         self.tier4_reflexions: List[str] = []
-        self.history_log = StateHistoryLog(game_id=game_id)
+        self.history_log = ProgrammaticMemoryEngine(game_id=game_id)
 
     def estimate_tokens(self, text: str) -> int:
         return max(1, len(text) // 4)
@@ -100,6 +103,7 @@ class ContextManager:
         post_hash: int = 0,
         coord_xy: Tuple[int, int] = (0, 0),
         av_pos: Optional[Tuple[int, int]] = None,
+        remote_triggers: Optional[List[Tuple[int, int]]] = None,
     ) -> None:
         entry = f"t={step}: act={action_id} dOmega={delta_omega} {note}".strip()
         self.tier1_episodic.append(entry)
@@ -113,6 +117,7 @@ class ContextManager:
             delta_omega=delta_omega,
             diff_summary=note,
             av_pos=av_pos,
+            remote_triggers=remote_triggers,
         )
         self._enforce_hysteresis()
 
@@ -132,8 +137,11 @@ class ContextManager:
         ) > self.low_water_tokens:
             compacted_chunk.append(self.tier1_episodic.popleft())
         if compacted_chunk:
-            digest = f"[Compacted {len(compacted_chunk)} steps: {compacted_chunk[0]} .. {compacted_chunk[-1]}]"
-            self.tier2_summaries.append(digest)
+            causal_events = self.history_log.find_causal_triggers()[-2:]
+            trig_note = f" causal_events={len(causal_events)}" if causal_events else ""
+            self.tier2_summaries.append(
+                f"[Compacted {len(compacted_chunk)} steps: {compacted_chunk[0]} .. {compacted_chunk[-1]}{trig_note}]"
+            )
         while len(self.tier2_summaries) > 4:
             self.tier2_summaries.pop(0)
 
@@ -147,19 +155,19 @@ class ContextManager:
         entities_summary: str,
         available_actions: List[int],
     ) -> str:
-        tier3 = (
-            f"Level={level_idx} | AvatarPos={av_pos} | Vectors={vectors} | "
-            f"Walls={sorted(walls)} | Hazards={sorted(hazards)} | Avail={available_actions}"
-        )
+        tier3 = f"Level={level_idx} | AvatarPos={av_pos} | Vectors={vectors} | Walls={sorted(walls)} | Hazards={sorted(hazards)} | Avail={available_actions}"
         t2 = "\n".join(self.tier2_summaries[-3:])
         t1 = self.history_log.format_recent_table(n=8)
         t4 = "\n".join(self.tier4_reflexions[-3:])
+        causal_hits = self.history_log.find_causal_triggers()[-3:]
+        causal_str = "; ".join(f"t={c['step']}:a={c['action']}->trig={c['remote_triggers']}" for c in causal_hits)
         return (
-            f"{self.SYSTEM_PREFIX}\n"
+            f"{self.SYSTEM_PREFIX}"
             f"[TIER 3 LAWS] {tier3}\n"
+            f"[CAUSAL TRIGGERS] {causal_str}\n"
             f"[TIER 4 REFLEXION] {t4}\n"
             f"[TIER 2 COMPACTED] {t2}\n"
-            f"[TIER 1 RGB LOG]\n{t1}\n"
+            f"[TIER 1 PRO-LONG LOG]\n{t1}\n"
             f"[ENTITIES] {entities_summary}\n"
             f"Emit next JSON subgoal:"
         )

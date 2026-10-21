@@ -3,11 +3,6 @@ from typing import Optional
 
 
 class SystemPacer:
-    """
-    Tracks active CPU/GPU compute time per step rather than wall-clock wait time
-    so concurrent Swarm threads never suffer false-positive timeouts.
-    """
-
     GLOBAL_START_TIME = time.time()
     GLOBAL_HARD_LIMIT_S = 31800.0
 

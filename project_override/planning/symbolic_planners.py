@@ -5,8 +5,6 @@ import numpy as np
 
 
 class MacroActionQueue:
-    """Executes multi-step discrete or click plans with immediate rollback on delta_omega == 0."""
-
     def __init__(self):
         self.queue: deque = deque()
         self.active_subagent: str = "NONE"
@@ -44,7 +42,6 @@ def astar_grid(
     portals: Optional[Dict[Tuple[int, int], Tuple[int, int]]] = None,
     max_expansions: int = 2500,
 ) -> Optional[List[int]]:
-    """A* Grid Planner supporting arbitrary displacement strides and paired Portal teleporters."""
     if not action_vectors:
         return None
     h, w = grid_shape
@@ -160,7 +157,6 @@ def sokoban_bfs(
     grid_shape: Tuple[int, int] = (64, 64),
     max_states: int = 3500,
 ) -> Optional[List[int]]:
-    """A* Sokoban Push Planner with Hungarian Box-to-Goal Heuristic and Corner Deadlock Pruning."""
     if not boxes or not goals or not action_vectors:
         return None
     h, w = grid_shape

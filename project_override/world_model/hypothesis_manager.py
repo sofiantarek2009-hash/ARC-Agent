@@ -2,23 +2,19 @@ from typing import Dict, List, Optional, Set, Tuple
 
 
 class HypothesisManager:
-    """
-    Active Scientific Experimentation & Causal Entity Semantic Ledger.
-    Tracks falsifiable hypotheses on directional kinematics, paired portals,
-    and entity color roles: FLOOR, AVATAR, WALL, HAZARD, BOX, PORTAL, SWITCH, GOAL.
-    """
-
     def __init__(self):
         self.probe_order: List[int] = [1, 3, 2, 4]
         self.tested_actions: Dict[int, int] = {}
         self.color_semantics: Dict[int, str] = {}
         self.portal_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
         self.interacted_positions: Set[Tuple[int, int]] = set()
+        self.collected_keys: Set[int] = set()
 
     def reset_level(self, keep_semantics: bool = True) -> None:
         self.tested_actions.clear()
         self.portal_map.clear()
         self.interacted_positions.clear()
+        self.collected_keys.clear()
         if not keep_semantics:
             self.color_semantics.clear()
 
@@ -35,7 +31,6 @@ class HypothesisManager:
         known_vectors: Dict[int, Tuple[int, int]],
         schema_frozen: bool = False,
     ) -> Optional[int]:
-        """If schema_frozen is True (Levels 2..K), zero probing is needed (saves quadratic RHAE!)."""
         if schema_frozen and len(known_vectors) >= 2:
             return None
         for act in self.probe_order:

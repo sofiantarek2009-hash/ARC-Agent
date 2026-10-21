@@ -3,8 +3,6 @@ import numpy as np
 
 
 class JordanCurveCavityInducer:
-    """Detects hollow frames, target receptacles, and enclosed cavities."""
-
     @staticmethod
     def find_cavities(grid: np.ndarray, bg_color: int, bezel_px: int = 4) -> List[Tuple[int, int]]:
         arr = np.asarray(grid, dtype=np.int8)
@@ -27,12 +25,6 @@ class JordanCurveCavityInducer:
 
 
 class BlueprintMatcher:
-    """
-    Multi-Scale Reference Blueprint & Legend Pattern Completion Inducer.
-    Detects when a smaller reference pattern (e.g. 1x, 2x, 3x, 4x scaled) exists in one
-    quadrant/panel and emits the missing target coordinates on the main canvas.
-    """
-
     @staticmethod
     def find_blueprint_clicks(
         grid: np.ndarray, bg_color: int, bezel_px: int = 4
@@ -84,8 +76,6 @@ class BlueprintMatcher:
 
 
 class DihedralSymmetrySolver:
-    """Full D4 Dihedral Split-Panel Symmetry & Odd-One-Out Pattern Completion Solver."""
-
     @staticmethod
     def _d4_transforms(panel: np.ndarray) -> List[Tuple[str, np.ndarray]]:
         transforms = [
@@ -143,8 +133,6 @@ class DihedralSymmetrySolver:
 
 
 class LatentMemoryMatcher:
-    """Tracks hidden-state tile reveals in Concentration / Memory-Match games."""
-
     def __init__(self):
         self.known_tiles: Dict[Tuple[int, int], int] = {}
         self.matched_positions: Set[Tuple[int, int]] = set()

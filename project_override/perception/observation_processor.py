@@ -50,11 +50,6 @@ def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
 
 
 class ObservationProcessor:
-    """
-    Zero-color-assumption CCL + Multi-Frame Animation Kinematics Extractor
-    + Motion-Anchored Sprite Tracker + Remote Causal Trigger Detector.
-    """
-
     def __init__(self, bezel_px: int = 4):
         self.bezel_px = bezel_px
 
@@ -175,10 +170,6 @@ class ObservationProcessor:
         return int(np.sum(diff))
 
     def analyze_animation_frames(self, frame_sequence: List[np.ndarray]) -> Dict[str, bool]:
-        """
-        Inspects intermediate non-interactive animation frames emitted by ARCEngine
-        to detect continuous sliding, gravity cascades, or multi-step chain reactions.
-        """
         info = {"has_cascade": False, "is_continuous_slide": False}
         if not frame_sequence or len(frame_sequence) <= 1:
             return info
@@ -194,11 +185,6 @@ class ObservationProcessor:
         known_avatar_colors: Optional[Set[int]] = None,
         hud_mask: Optional[np.ndarray] = None,
     ) -> Optional[Tuple[int, Set[int], Tuple[int, int], Tuple[float, float], Set[int], List[Tuple[int, int]]]]:
-        """
-        Universal Rigid-Body Differential Tracker + Remote Causal Trigger Detector.
-        Returns:
-          (floor_color, avatar_colors, (dr, dc), post_centroid, pushed_box_colors, remote_changed_centroids)
-        """
         f0 = np.asarray(prev_grid, dtype=np.int8)
         f1 = np.asarray(curr_grid, dtype=np.int8)
         if f0.shape != f1.shape:

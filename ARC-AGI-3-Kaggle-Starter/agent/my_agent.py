@@ -10,10 +10,7 @@ _COMPUTE_SEMAPHORE = threading.Semaphore(2)
 
 
 class MyAgent(Agent):
-    """
-    Competition Entrypoint for ARC-AGI-3 (Swarm / Multi-Thread Safe).
-    Passes both settled frames and intermediate ARCEngine animation sequences to GeneralAgent.
-    """
+    """Competition Entrypoint for ARC-AGI-3 (Swarm / Multi-Thread Safe)."""
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)

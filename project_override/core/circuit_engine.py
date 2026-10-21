@@ -3,8 +3,6 @@ import numpy as np
 
 
 class AC3CircuitSolver:
-    """Bezel-guarded Periodic Lattice & AC-3 Circuit Tile Rotation Detector."""
-
     @staticmethod
     def detect_periodic_circuit_clicks(
         grid: np.ndarray, bg_color: int, bezel_px: int = 4

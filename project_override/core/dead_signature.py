@@ -5,13 +5,6 @@ import numpy as np
 
 
 class DynamicHUDMasker:
-    """
-    Tycho Abstained-Cell HUD & Timer-Bar Separator (arXiv:2607.28287).
-    Identifies border/corner HUD cells that change monotonically on every action
-    (such as 64-cell move-budget bars or life counters) so they never corrupt
-    arena hashes, delta_omega, or world-model retrodiction.
-    """
-
     def __init__(self, shape: Tuple[int, int] = (64, 64), default_bezel: int = 4):
         self.shape = shape
         self.default_bezel = default_bezel
@@ -41,15 +34,19 @@ class DynamicHUDMasker:
         if 0 < changed_px <= 120:
             self.total_transitions += 1
             self.change_counts[diff] += 1
-            if self.total_transitions >= 3:
-                h, w = self.shape
-                border_band = np.zeros((h, w), dtype=bool)
-                border_band[:8, :] = True
-                border_band[h - 8:, :] = True
-                border_band[:, :8] = True
-                border_band[:, w - 8:] = True
-                frequent = (self.change_counts >= max(2, self.total_transitions - 1)) & border_band
-                self.hud_mask |= frequent
+            h, w = self.shape
+            border_band = np.zeros((h, w), dtype=bool)
+            border_band[:8, :] = True
+            border_band[h - 8:, :] = True
+            border_band[:, :8] = True
+            border_band[:, w - 8:] = True
+            self.hud_mask |= (self.change_counts >= 2) & border_band
+            for r in range(h):
+                if (r < 8 or r >= h - 8) and int(np.sum(self.change_counts[r, :])) >= 3:
+                    self.hud_mask[r, self.change_counts[r, :] >= 1] = True
+            for c in range(w):
+                if (c < 8 or c >= w - 8) and int(np.sum(self.change_counts[:, c])) >= 3:
+                    self.hud_mask[self.change_counts[:, c] >= 1, c] = True
 
     def mask_grid(self, grid: np.ndarray) -> np.ndarray:
         arr = np.asarray(grid, dtype=np.int8).copy()
@@ -57,23 +54,22 @@ class DynamicHUDMasker:
             arr[self.hud_mask] = 0
         return arr
 
+    def coverage_ratio(self) -> float:
+        return float(np.mean(~self.hud_mask))
+
 
 def compute_arena_hash(
     grid: np.ndarray,
     bezel_px: int = 4,
     hud_masker: Optional[DynamicHUDMasker] = None,
 ) -> int:
-    """Computes a 44-bit Blake2b spatial hash masking out perimeter bezels and dynamic HUD bars."""
     arr = np.asarray(grid, dtype=np.int8)
     if hud_masker is not None and arr.shape == hud_masker.shape:
         masked = hud_masker.mask_grid(arr)
         digest = hashlib.blake2b(np.ascontiguousarray(masked).tobytes(), digest_size=8).digest()
         return int.from_bytes(digest, "little") & ((1 << 44) - 1)
     h, w = arr.shape
-    if h > 2 * bezel_px and w > 2 * bezel_px:
-        core = np.ascontiguousarray(arr[bezel_px:h - bezel_px, bezel_px:w - bezel_px])
-    else:
-        core = np.ascontiguousarray(arr)
+    core = np.ascontiguousarray(arr[bezel_px:h - bezel_px, bezel_px:w - bezel_px]) if (h > 2 * bezel_px and w > 2 * bezel_px) else np.ascontiguousarray(arr)
     digest = hashlib.blake2b(core.tobytes(), digest_size=8).digest()
     return int.from_bytes(digest, "little") & ((1 << 44) - 1)
 
@@ -85,7 +81,6 @@ def pack_signature_64(
     coord_y: int = 0,
     level_idx: int = 0,
 ) -> int:
-    """Packs (arena_hash: 44b, level_idx: 4b, coord_y: 6b, coord_x: 6b, action_id: 4b) into 64-bit int."""
     h44 = arena_hash & ((1 << 44) - 1)
     lvl4 = level_idx & 0xF
     cy6 = coord_y & 0x3F
@@ -95,14 +90,9 @@ def pack_signature_64(
 
 
 class DeadSignatureTable:
-    """
-    O(1) dead-action & fatal-action pruning + Empirical Transition Graph + IW(1)/IW(2) Novelty Table
-    + Action-Efficiency Penalty Scorer (benchmaxxing RHAE protection).
-    """
-
     INVERSE_MAP = {1: 2, 2: 1, 3: 4, 4: 3}
 
-    def __init__(self, ring_size: int = 28):
+    def __init__(self, ring_size: int = 32):
         self.dead_set: Set[int] = set()
         self.death_set: Set[int] = set()
         self.ring_buffer: deque = deque(maxlen=ring_size)
@@ -127,14 +117,7 @@ class DeadSignatureTable:
             self.death_set.clear()
             self.dead_set.clear()
 
-    def record_death(
-        self,
-        pre_hash: int,
-        action_id: int,
-        coord_x: int = 0,
-        coord_y: int = 0,
-        level_idx: int = 0,
-    ) -> None:
+    def record_death(self, pre_hash: int, action_id: int, coord_x: int = 0, coord_y: int = 0, level_idx: int = 0) -> None:
         sig = pack_signature_64(pre_hash, action_id, coord_x, coord_y, level_idx)
         self.death_set.add(sig)
         self.dead_set.add(sig)
@@ -164,20 +147,16 @@ class DeadSignatureTable:
             self.transitions[pre_hash][act_key] = post_hash
             if post_grid is not None and post_hash not in self.state_grids:
                 self.state_grids[post_hash] = post_grid.copy()
-                nov = self.update_novelty(post_grid)
-                self.state_novelty[post_hash] = nov
-
+                self.state_novelty[post_hash] = self.update_novelty(post_grid)
         self.ring_buffer.append(post_hash)
 
     def update_novelty(self, grid: np.ndarray) -> int:
-        """Evaluates both IW(1) single-atom and IW(2) pairwise feature novelty."""
         arr = np.asarray(grid, dtype=np.int8)
         new_count = 0
         active_atoms = []
         for r in range(4, arr.shape[0] - 4, 4):
             for c in range(4, arr.shape[1] - 4, 4):
-                val = int(arr[r, c])
-                atom = (r, c, val)
+                atom = (r, c, int(arr[r, c]))
                 active_atoms.append(atom)
                 if atom not in self.seen_atoms:
                     self.seen_atoms.add(atom)
@@ -191,16 +170,16 @@ class DeadSignatureTable:
                         new_count += 1
         return new_count
 
-    def is_dead(
-        self,
-        arena_hash: int,
-        action_id: int,
-        coord_x: int = 0,
-        coord_y: int = 0,
-        level_idx: int = 0,
-    ) -> bool:
+    def is_dead(self, arena_hash: int, action_id: int, coord_x: int = 0, coord_y: int = 0, level_idx: int = 0) -> bool:
         sig = pack_signature_64(arena_hash, action_id, coord_x, coord_y, level_idx)
         return (sig in self.dead_set) or (sig in self.death_set)
+
+    def get_untried_actions(self, arena_hash: int, available_actions: List[int], level_idx: int = 0) -> List[int]:
+        tried = {k[0] for k in self.transitions.get(arena_hash, {}).keys()}
+        return [
+            int(a) for a in available_actions
+            if int(a) in (1, 2, 3, 4, 5, 7) and int(a) not in tried and not self.is_dead(arena_hash, int(a), 0, 0, level_idx)
+        ]
 
     def compute_action_penalty(
         self,
@@ -211,11 +190,6 @@ class DeadSignatureTable:
         coord_y: int = 0,
         level_idx: int = 0,
     ) -> float:
-        """
-        RHAE Move & Action Penalty Scorer:
-        Heavily downvotes actions known to be dead, actions that lead to already-visited
-        states, or immediate 2-step reversals without intermediate causal change.
-        """
         if self.is_dead(arena_hash, action_id, coord_x, coord_y, level_idx):
             return 1e6
         penalty = 0.0
@@ -223,8 +197,7 @@ class DeadSignatureTable:
         known_out = self.transitions.get(arena_hash, {})
         if act_key in known_out:
             dest_hash = known_out[act_key]
-            visits = self.state_visit_counts.get(dest_hash, 0)
-            penalty += visits * 4.5
+            penalty += self.state_visit_counts.get(dest_hash, 0) * 4.5
             if len(self.ring_buffer) >= 2 and dest_hash == self.ring_buffer[-2]:
                 penalty += 25.0
         if last_action_id is not None and self.INVERSE_MAP.get(last_action_id) == action_id:
@@ -255,15 +228,9 @@ class DeadSignatureTable:
     ) -> Optional[List[int]]:
         if not candidate_actions:
             return None
-        tried_here = {k[0] for k in self.transitions.get(current_hash, {}).keys()}
-        untried_here = [
-            a for a in candidate_actions
-            if not self.is_dead(current_hash, a, 0, 0, level_idx) and a not in tried_here
-        ]
+        untried_here = self.get_untried_actions(current_hash, candidate_actions, level_idx)
         if untried_here:
-            untried_here.sort(
-                key=lambda a: self.compute_action_penalty(current_hash, a, last_action_id, 0, 0, level_idx)
-            )
+            untried_here.sort(key=lambda a: self.compute_action_penalty(current_hash, a, last_action_id, 0, 0, level_idx))
             return [untried_here[0]]
 
         queue = deque([(current_hash, [])])
@@ -279,17 +246,14 @@ class DeadSignatureTable:
             for a in candidate_actions:
                 if not self.is_dead(sh, a, 0, 0, level_idx) and a not in tried:
                     cand_path = path + [a]
-                    nov = self.state_novelty.get(sh, 0)
-                    visits = self.state_visit_counts.get(sh, 1)
-                    score = (nov * 3.0) - (len(cand_path) * 1.2) - (visits * 0.8)
+                    score = (self.state_novelty.get(sh, 0) * 3.0) - (len(cand_path) * 1.2) - (self.state_visit_counts.get(sh, 1) * 0.8)
                     if score > best_score:
                         best_score = score
                         best_path = cand_path
                     if len(cand_path) <= 2:
                         return cand_path
             for (act_id, cx, cy), nxt_h in self.transitions.get(sh, {}).items():
-                if act_id in candidate_actions and nxt_h not in visited:
-                    if not self.is_dead(sh, act_id, cx, cy, level_idx):
-                        visited.add(nxt_h)
-                        queue.append((nxt_h, path + [act_id]))
+                if act_id in candidate_actions and nxt_h not in visited and not self.is_dead(sh, act_id, cx, cy, level_idx):
+                    visited.add(nxt_h)
+                    queue.append((nxt_h, path + [act_id]))
         return best_path
