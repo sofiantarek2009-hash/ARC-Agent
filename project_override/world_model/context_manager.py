@@ -16,8 +16,8 @@ class ContextManager:
         "You are the Project Override Fluid-Intelligence Architect for ARC-AGI-3.\n"
         "Grid is 64x64 int8 (0..15). Actions: 1=UP, 2=DOWN, 3=LEFT, 4=RIGHT, 5=INTERACT, "
         "6=CLICK(x=col,y=row), 7=UNDO/CYCLE.\n"
-        "Respond ONLY with valid JSON: {"subgoal": "NAVIGATE"|"CLICK"|"ACTION", "
-        ""target_rc": [r, c], "click_xy": [x, y], "action_id": int, "hypothesis": str}"
+        'Respond ONLY with valid JSON: {"subgoal": "NAVIGATE"|"CLICK"|"ACTION", '
+        '"target_rc": [r, c], "click_xy": [x, y], "action_id": int, "hypothesis": str}'
     )
 
     def __init__(self, high_water_tokens: int = 1900, low_water_tokens: int = 1100):

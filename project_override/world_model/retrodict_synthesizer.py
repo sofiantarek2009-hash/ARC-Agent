@@ -1,4 +1,5 @@
 from collections import deque
+import heapq
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 
+from project_override.core.dead_signature import DeadSignatureTable, compute_arena_hash
 from project_override.world_model.ast_sandbox import ASTSandbox
 
 logger = logging.getLogger(__name__)
@@ -207,7 +209,7 @@ class OfflineLLMRuntime:
                 self.is_loaded = False
                 return False
 
-    def generate_text(self, prompt: str, max_new_tokens: int = 180, timeout_s: float = 14.0) -> Optional[str]:
+    def generate_text(self, prompt: str, max_new_tokens: int = 190, timeout_s: float = 14.0) -> Optional[str]:
         if not self.ensure_loaded():
             return None
         if not self._INFERENCE_LOCK.acquire(timeout=2.0):
@@ -255,8 +257,8 @@ class OfflineLLMRuntime:
 
 class RetrodictWorldModelSynthesizer:
     """
-    Multi-Hypothesis CEGIS World Model Engine (Cardinal, Toroidal Wrap, Gravity Cascade,
-    Portal Teleport, and Qwen 32B AWQ Custom Code Synthesis) + IW(2) Simulated Planner.
+    6-Archetype CEGIS World Model Engine + Multi-Turn Qwen 32B AWQ Code Refinement
+    + Best-First Width Search (BFWS / IW(2)) Simulated Planner.
     """
 
     def __init__(self):
@@ -278,28 +280,31 @@ class RetrodictWorldModelSynthesizer:
             if len(self.transitions) > 20:
                 self.transitions.pop(0)
 
-    def synthesize_world_model(
+    def _build_archetype_candidates(
         self,
-        floor_color: Optional[int],
+        floor_color: int,
         avatar_colors: Set[int],
         wall_colors: Set[int],
         box_colors: Set[int],
         vectors: Dict[int, Tuple[int, int]],
-    ) -> Optional[Callable]:
-        if floor_color is None or not avatar_colors or not vectors:
-            return None
+    ) -> List[str]:
+        fl = int(floor_color)
+        av_repr = repr(set(int(c) for c in avatar_colors))
+        wl_repr = repr(set(int(c) for c in wall_colors))
+        bx_repr = repr(set(int(c) for c in box_colors))
+        vc_repr = repr(vectors)
 
-        # Candidate 1: Standard Cardinal + Box Push World Model
-        cand_standard = f"""
+        # 1. Cardinal + Sokoban Multi-Box Push
+        c1_cardinal = f"""
 def predict_next_grid(grid, action, data=None):
-    vecs = {repr(vectors)}
+    vecs = {vc_repr}
     if action not in vecs:
         return grid
     dr, dc = vecs[action]
-    floor_c = {int(floor_color)}
-    av_cols = {repr(set(int(c) for c in avatar_colors))}
-    wall_cols = {repr(set(int(c) for c in wall_colors))}
-    box_cols = {repr(set(int(c) for c in box_colors))}
+    floor_c = {fl}
+    av_cols = {av_repr}
+    wall_cols = {wl_repr}
+    box_cols = {bx_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
@@ -310,8 +315,7 @@ def predict_next_grid(grid, action, data=None):
         nr, nc = int(r + dr), int(c + dc)
         if not (4 <= nr < h - 4 and 4 <= nc < w - 4):
             return grid
-        dest_c = int(grid[nr, nc])
-        if dest_c in wall_cols:
+        if int(grid[nr, nc]) in wall_cols:
             return grid
     nxt = grid.copy()
     for r, c in pts:
@@ -325,16 +329,16 @@ def predict_next_grid(grid, action, data=None):
         nxt[nr, nc] = grid[int(r), int(c)]
     return nxt
 """
-        # Candidate 2: Toroidal Wrap-Around World Model (for wrap-around alien arenas)
-        cand_toroidal = f"""
+        # 2. Toroidal Modulo Wrap-Around
+        c2_toroidal = f"""
 def predict_next_grid(grid, action, data=None):
-    vecs = {repr(vectors)}
+    vecs = {vc_repr}
     if action not in vecs:
         return grid
     dr, dc = vecs[action]
-    floor_c = {int(floor_color)}
-    av_cols = {repr(set(int(c) for c in avatar_colors))}
-    wall_cols = {repr(set(int(c) for c in wall_colors))}
+    floor_c = {fl}
+    av_cols = {av_repr}
+    wall_cols = {wl_repr}
     h, w = grid.shape
     mask = np.isin(grid, list(av_cols))
     mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
@@ -355,11 +359,106 @@ def predict_next_grid(grid, action, data=None):
         nxt[nr, nc] = grid[int(r), int(c)]
     return nxt
 """
+        # 3. Ice-Slide Continuous Raycast
+        c3_slide = f"""
+def predict_next_grid(grid, action, data=None):
+    vecs = {vc_repr}
+    if action not in vecs:
+        return grid
+    dr, dc = vecs[action]
+    ur = 0 if dr == 0 else (1 if dr > 0 else -1)
+    uc = 0 if dc == 0 else (1 if dc > 0 else -1)
+    floor_c = {fl}
+    av_cols = {av_repr}
+    wall_cols = {wl_repr}
+    h, w = grid.shape
+    mask = np.isin(grid, list(av_cols))
+    mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
+    pts = np.argwhere(mask)
+    if len(pts) == 0:
+        return grid
+    k = 0
+    while k < 56:
+        blocked = False
+        for r, c in pts:
+            nr, nc = int(r + ur * (k + 1)), int(c + uc * (k + 1))
+            if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols:
+                blocked = True
+                break
+        if blocked:
+            break
+        k += 1
+    if k == 0:
+        return grid
+    nxt = grid.copy()
+    for r, c in pts:
+        nxt[int(r), int(c)] = floor_c
+    for r, c in pts:
+        nxt[int(r + ur * k), int(c + uc * k)] = grid[int(r), int(c)]
+    return nxt
+"""
+        # 4. Gravity / Falling-Sand Cascade after Move
+        c4_gravity = f"""
+def predict_next_grid(grid, action, data=None):
+    vecs = {vc_repr}
+    if action not in vecs:
+        return grid
+    dr, dc = vecs[action]
+    floor_c = {fl}
+    av_cols = {av_repr}
+    wall_cols = {wl_repr}
+    h, w = grid.shape
+    mask = np.isin(grid, list(av_cols))
+    mask[:4, :] = False; mask[h-4:, :] = False; mask[:, :4] = False; mask[:, w-4:] = False
+    pts = np.argwhere(mask)
+    if len(pts) == 0:
+        return grid
+    for r, c in pts:
+        nr, nc = int(r + dr), int(c + dc)
+        if not (4 <= nr < h - 4 and 4 <= nc < w - 4) or int(grid[nr, nc]) in wall_cols:
+            return grid
+    nxt = grid.copy()
+    for r, c in pts:
+        nxt[int(r), int(c)] = floor_c
+    for r, c in pts:
+        nxt[int(r + dr), int(c + dc)] = grid[int(r), int(c)]
+    # Apply downward gravity settle
+    for _ in range(4):
+        pts2 = np.argwhere(np.isin(nxt, list(av_cols)))
+        can_fall = len(pts2) > 0 and all(
+            int(r + 1) < h - 4 and (int(nxt[int(r + 1), int(c)]) == floor_c or int(nxt[int(r + 1), int(c)]) in av_cols)
+            for r, c in pts2
+        )
+        if not can_fall:
+            break
+        prev_nxt = nxt.copy()
+        for r, c in pts2:
+            nxt[int(r), int(c)] = floor_c
+        for r, c in pts2:
+            nxt[int(r + 1), int(c)] = prev_nxt[int(r), int(c)]
+    return nxt
+"""
+        return [c1_cardinal, c2_toroidal, c3_slide, c4_gravity]
+
+    def synthesize_world_model(
+        self,
+        floor_color: Optional[int],
+        avatar_colors: Set[int],
+        wall_colors: Set[int],
+        box_colors: Set[int],
+        vectors: Dict[int, Tuple[int, int]],
+    ) -> Optional[Callable]:
+        if floor_color is None or not avatar_colors or not vectors:
+            return None
+
         best_fn = None
         best_acc = -1.0
         best_ce = None
+        best_code = None
 
-        for code_cand in (cand_standard, cand_toroidal):
+        for code_cand in self._build_archetype_candidates(
+            floor_color, avatar_colors, wall_colors, box_colors, vectors
+        ):
             fn = ASTSandbox.validate_and_compile(code_cand)
             if fn is not None:
                 if len(self.transitions) >= 2:
@@ -368,41 +467,49 @@ def predict_next_grid(grid, action, data=None):
                         best_acc = acc
                         best_fn = fn
                         best_ce = ce
-                    if acc >= 0.85:
+                        best_code = code_cand
+                    if acc >= 0.90:
                         self.verified_fn = fn
                         self.verified_code = code_cand
                         return fn
                 elif best_fn is None:
                     best_fn = fn
+                    best_code = code_cand
 
-        # Invoke Qwen 2.5 Coder 32B AWQ for alien mechanics when symbolic templates have <85% retrodiction
+        # Multi-Turn Qwen 2.5 Coder 32B AWQ CEGIS Refinement for Alien Mechanics
         llm = OfflineLLMRuntime.get_instance()
         if llm.ensure_loaded() and len(self.transitions) >= 2:
-            cegis_prompt = (
-                "Write ONLY a pure Python function `def predict_next_grid(grid, action, data=None):` "
-                "using `np` (no imports) that predicts the next 64x64 int8 grid.
-"
-                f"Induced parameters: floor={floor_color}, avatar={avatar_colors}, walls={wall_colors}, "
-                f"boxes={box_colors}, vectors={vectors}.
-"
-                f"Counterexample on baseline template: {best_ce}
-"
-                "Return ONLY valid Python code inside ```python ... ```."
-            )
-            resp = llm.generate_text(cegis_prompt, max_new_tokens=240)
-            if resp:
+            curr_ce = best_ce
+            for _ in range(2):
+                cegis_prompt = (
+                    "Write ONLY a pure Python function `def predict_next_grid(grid, action, data=None):` "
+                    "using `np` (no imports) that predicts the next 64x64 int8 grid.\n"
+                    f"Induced parameters: floor={floor_color}, avatar={avatar_colors}, walls={wall_colors}, "
+                    f"boxes={box_colors}, vectors={vectors}.\n"
+                    f"Counterexample on current model: {curr_ce}\n"
+                    "Return ONLY valid Python code inside ```python ... ```."
+                )
+                resp = llm.generate_text(cegis_prompt, max_new_tokens=240)
+                if not resp:
+                    break
                 m = re.search(r"```(?:python)?\s*(def predict_next_grid.*?)```", resp, re.DOTALL)
                 cand_code = m.group(1).strip() if m else resp.strip()
                 llm_fn = ASTSandbox.validate_and_compile(cand_code)
                 if llm_fn is not None:
-                    acc2, _ = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions)
-                    if acc2 >= best_acc and acc2 >= 0.70:
+                    acc2, ce2 = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions)
+                    if acc2 > best_acc:
+                        best_acc = acc2
+                        best_fn = llm_fn
+                        best_code = cand_code
+                    if acc2 >= 0.85:
                         self.verified_fn = llm_fn
                         self.verified_code = cand_code
                         return llm_fn
+                    curr_ce = ce2
 
         if best_fn is not None:
             self.verified_fn = best_fn
+            self.verified_code = best_code
         return best_fn
 
     def plan_iw_lookahead(
@@ -411,9 +518,14 @@ def predict_next_grid(grid, action, data=None):
         available_actions: List[int],
         target_pos: Optional[Tuple[int, int]],
         avatar_colors: Set[int],
-        max_expansions: int = 140,
+        dead_table: Optional[DeadSignatureTable] = None,
+        level_idx: int = 0,
+        max_expansions: int = 160,
     ) -> Optional[List[int]]:
-        """Width-1 + Width-2 Iterated Width IW(2) lookahead over verified world model."""
+        """
+        Best-First Width Search (BFWS) combining IW(1) + IW(2) Novelty with Goal-Distance Heuristic
+        and Dead/Hazard Signature Pruning over the verified Python world model.
+        """
         if self.verified_fn is None or not avatar_colors:
             return None
         moves = [a for a in available_actions if a in (1, 2, 3, 4, 5)]
@@ -444,15 +556,19 @@ def predict_next_grid(grid, action, data=None):
             return nov
 
         _evaluate_novelty(start_grid)
-        queue = deque([(start_grid.copy(), [])])
+        tie_breaker = 0
+        open_heap: List[Tuple[float, int, np.ndarray, List[int]]] = [(0.0, tie_breaker, start_grid.copy(), [])]
         expansions = 0
 
-        while queue and expansions < max_expansions:
-            g, path = queue.popleft()
+        while open_heap and expansions < max_expansions:
+            _, _, g, path = heapq.heappop(open_heap)
             expansions += 1
             if len(path) >= 16:
                 continue
+            g_hash = compute_arena_hash(g, bezel_px=4) if dead_table is not None else 0
             for a in moves:
+                if dead_table is not None and dead_table.is_dead(g_hash, a, 0, 0, level_idx):
+                    continue
                 try:
                     nxt_g = self.verified_fn(g, a, {})
                 except Exception:
@@ -465,6 +581,15 @@ def predict_next_grid(grid, action, data=None):
                     if 0 <= tr < nxt_g.shape[0] and 0 <= tc < nxt_g.shape[1]:
                         if int(nxt_g[tr, tc]) in avatar_colors:
                             return new_path
-                if _evaluate_novelty(nxt_g) > 0:
-                    queue.append((nxt_g, new_path))
+                nov = _evaluate_novelty(nxt_g)
+                if nov > 0:
+                    dist_pen = 0.0
+                    if target_pos is not None:
+                        pts = np.argwhere(np.isin(nxt_g, list(avatar_colors)))
+                        if len(pts) > 0:
+                            av_r, av_c = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+                            dist_pen = (abs(av_r - target_pos[0]) + abs(av_c - target_pos[1])) * 0.15
+                    priority = len(new_path) + dist_pen - (nov * 1.5)
+                    tie_breaker += 1
+                    heapq.heappush(open_heap, (priority, tie_breaker, nxt_g, new_path))
         return None

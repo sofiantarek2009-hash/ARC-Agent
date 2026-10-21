@@ -132,6 +132,26 @@ class ObservationProcessor:
         ]
         return "; ".join(parts)
 
+    def summarize_transition_diff(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> str:
+        """Compact symbolic diff of vanished and appeared pixels for Qwen 32B CEGIS synthesis."""
+        f0 = np.asarray(prev_grid, dtype=np.int8)
+        f1 = np.asarray(curr_grid, dtype=np.int8)
+        diff = f0 != f1
+        if f0.shape[0] >= 16:
+            bz = self.bezel_px
+            diff[:bz, :] = False
+            diff[-bz:, :] = False
+            diff[:, :bz] = False
+            diff[:, -bz:] = False
+        rs, cs = np.where(diff)
+        if len(rs) == 0:
+            return "NO_CHANGE"
+        samples = []
+        for idx in range(min(10, len(rs))):
+            r, c = int(rs[idx]), int(cs[idx])
+            samples.append(f"({r},{c}):{int(f0[r,c])}->{int(f1[r,c])}")
+        return f"n_px={len(rs)} [" + ", ".join(samples) + "]"
+
     def compute_delta_omega(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> int:
         a = np.asarray(prev_grid, dtype=np.int8)
         b = np.asarray(curr_grid, dtype=np.int8)

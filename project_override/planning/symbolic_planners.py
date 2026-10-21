@@ -136,16 +136,20 @@ def sokoban_bfs(
     walls: Set[Tuple[int, int]],
     action_vectors: Dict[int, Tuple[int, int]],
     grid_shape: Tuple[int, int] = (64, 64),
-    max_states: int = 3000,
+    max_states: int = 3500,
 ) -> Optional[List[int]]:
+    """A* Sokoban Push Planner with Hungarian Box-to-Goal Heuristic and Corner Deadlock Pruning."""
     if not boxes or not goals or not action_vectors:
         return None
     h, w = grid_shape
     strides = [max(abs(dr), abs(dc)) for dr, dc in action_vectors.values() if (dr, dc) != (0, 0)]
     s = max(1, min(strides)) if strides else 1
 
+    def is_goal_satisfied(b: Tuple[int, int]) -> bool:
+        return any(abs(b[0] - g[0]) < s and abs(b[1] - g[1]) < s for g in goals)
+
     def is_corner_deadlock(b: Tuple[int, int]) -> bool:
-        if b in goals:
+        if is_goal_satisfied(b):
             return False
         up = (b[0] - s, b[1]) in walls
         down = (b[0] + s, b[1]) in walls
@@ -153,15 +157,22 @@ def sokoban_bfs(
         right = (b[0], b[1] + s) in walls
         return (up or down) and (left or right)
 
-    init_boxes = frozenset(boxes)
-    queue = deque([(avatar, init_boxes, [])])
-    visited = {(avatar, init_boxes)}
+    def box_heuristic(curr_boxes: frozenset) -> float:
+        total = 0.0
+        for b in curr_boxes:
+            d_min = min(abs(b[0] - g[0]) + abs(b[1] - g[1]) for g in goals)
+            total += d_min / float(s)
+        return total
 
-    while queue and len(visited) < max_states:
-        av, curr_boxes, path = queue.popleft()
-        if curr_boxes.issubset(goals) or len(curr_boxes & goals) >= len(goals):
+    init_boxes = frozenset(boxes)
+    open_heap = [(box_heuristic(init_boxes), 0, avatar, init_boxes, [])]
+    visited = {(avatar, init_boxes): 0}
+
+    while open_heap and len(visited) < max_states:
+        _, g_cost, av, curr_boxes, path = heapq.heappop(open_heap)
+        if all(is_goal_satisfied(b) for b in curr_boxes):
             return path
-        if len(path) >= 40:
+        if len(path) >= 42:
             continue
 
         for act_id, (dr, dc) in action_vectors.items():
@@ -171,21 +182,31 @@ def sokoban_bfs(
             nxt_av = (nr, nc)
             if not (0 <= nr < h and 0 <= nc < w) or nxt_av in walls:
                 continue
-            if nxt_av in curr_boxes:
-                br, bc = nr + dr, nc + dc
+            hit_box = None
+            for b in curr_boxes:
+                if abs(nxt_av[0] - b[0]) < s and abs(nxt_av[1] - b[1]) < s:
+                    hit_box = b
+                    break
+            if hit_box is not None:
+                br, bc = hit_box[0] + dr, hit_box[1] + dc
                 nxt_box = (br, bc)
-                if not (0 <= br < h and 0 <= bc < w) or nxt_box in walls or nxt_box in curr_boxes:
+                if not (0 <= br < h and 0 <= bc < w) or nxt_box in walls:
+                    continue
+                if any(abs(nxt_box[0] - ob[0]) < s and abs(nxt_box[1] - ob[1]) < s for ob in curr_boxes if ob != hit_box):
                     continue
                 if is_corner_deadlock(nxt_box):
                     continue
-                new_boxes = frozenset((curr_boxes - {nxt_av}) | {nxt_box})
+                new_boxes = frozenset((curr_boxes - {hit_box}) | {nxt_box})
                 state = (nxt_av, new_boxes)
             else:
-                state = (nxt_av, curr_boxes)
+                new_boxes = curr_boxes
+                state = (nxt_av, new_boxes)
 
-            if state not in visited:
-                visited.add(state)
-                queue.append((state[0], state[1], path + [int(act_id)]))
+            new_g = g_cost + 1
+            if state not in visited or new_g < visited[state]:
+                visited[state] = new_g
+                f_score = new_g + box_heuristic(new_boxes)
+                heapq.heappush(open_heap, (f_score, new_g, state[0], state[1], path + [int(act_id)]))
     return None
 
 

@@ -25,7 +25,7 @@ from project_override.world_model.retrodict_synthesizer import (
 
 class GeneralAgent:
     """
-    Full 12-Module Neurosymbolic + CEGIS + Qwen-32B-AWQ Orchestrator for ARC-AGI-3.
+    Full 12-Module Neurosymbolic + CEGIS + BFWS + Qwen-32B-AWQ Orchestrator for ARC-AGI-3.
     """
 
     def __init__(self, game_id: str = "unknown"):
@@ -84,6 +84,7 @@ class GeneralAgent:
                         and lethal_color not in self.learned_avatar_colors
                     ):
                         self.confirmed_hazard_colors.add(lethal_color)
+                        self.hypotheses.record_color_role(lethal_color, "HAZARD")
                         self.context.record_reflexion(
                             f"GAME_OVER stepping onto hazard color {lethal_color} via action {self.last_action_id}"
                         )
@@ -107,6 +108,7 @@ class GeneralAgent:
         self.macro_queue.clear()
         self.dead_table.reset_level(clear_deaths=True)
         self.synthesizer.reset_level(keep_verified=True)
+        self.hypotheses.reset_level(keep_semantics=True)
         self.memory_matcher.reset()
         self.gf2_solver.reset()
         self.pacer.reset_level()
@@ -119,8 +121,7 @@ class GeneralAgent:
     def _locate_avatar_centroid(self, grid: np.ndarray) -> Optional[Tuple[int, int]]:
         """
         Motion-Anchored Sprite Locator:
-        Avoids averaging unrelated static objects or HUD icons that share a color with the avatar
-        by filtering pixels to the coherent sprite cluster nearest `last_known_av_pos`.
+        Filters matching avatar-color pixels to the coherent sprite cluster nearest `last_known_av_pos`.
         """
         if not self.learned_avatar_colors:
             return None
@@ -162,6 +163,7 @@ class GeneralAgent:
                 and c not in self.confirmed_box_colors
             ):
                 self.confirmed_wall_colors.add(c)
+                self.hypotheses.record_color_role(c, "WALL")
 
     def _retroactive_wall_scan(self) -> None:
         for pre_g, act_id, _, delta in self.transition_history:
@@ -233,7 +235,7 @@ class GeneralAgent:
                 self.last_click_xy = (int(first_xy[0]), int(first_xy[1]))
                 return 6, {"x": int(first_xy[0]), "y": int(first_xy[1])}
 
-        # 1. D4 Split-Panel Symmetry / Odd-One-Out Completion
+        # 1. D4 Split-Panel Symmetry & Multi-Scale Blueprint Completion
         for r, c in SplitPanelSymmetrySolver.find_asymmetric_clicks(grid, bg_color=bg, bezel_px=4):
             x, y = int(c), int(r)
             if not self.dead_table.is_dead(arena_hash, 6, x, y, self.current_level):
@@ -334,7 +336,8 @@ class GeneralAgent:
             self.synthesizer.record_transition(
                 self.prev_grid, self.last_action_id, {"x": cx, "y": cy} if self.last_action_id == 6 else {}, arr
             )
-            self.context.record_step(self.step_in_level, self.last_action_id, delta)
+            diff_note = self.processor.summarize_transition_diff(self.prev_grid, arr) if delta > 0 else "BLOCKED"
+            self.context.record_step(self.step_in_level, self.last_action_id, delta, note=diff_note)
 
             if self.last_action_id == 6 and delta > 0:
                 bg = self.processor.induce_background_color(arr, self.learned_floor_color)
@@ -351,11 +354,16 @@ class GeneralAgent:
                     if rigid is not None:
                         fl_c, av_colors, (dr, dc), post_cent, pushed_boxes, remote_triggers = rigid
                         self.learned_floor_color = fl_c
+                        self.hypotheses.record_color_role(fl_c, "FLOOR")
                         self.learned_avatar_colors |= av_colors
+                        for ac in av_colors:
+                            self.hypotheses.record_color_role(ac, "AVATAR")
                         self.learned_avatar_color = min(self.learned_avatar_colors)
                         self.last_known_av_pos = (int(round(post_cent[0])), int(round(post_cent[1])))
                         if pushed_boxes:
                             self.confirmed_box_colors |= pushed_boxes
+                            for bc in pushed_boxes:
+                                self.hypotheses.record_color_role(bc, "BOX")
                             self.learned_game_modality = "SOKOBAN"
                         if remote_triggers:
                             for r_trig in remote_triggers:
@@ -426,24 +434,27 @@ class GeneralAgent:
             else:
                 self.macro_queue.clear()
 
-        # 5. Fast 2-Probe Orthogonal Kinematic Basis Discovery on Level 0
-        probe_act = self.hypotheses.next_probe(move_actions, self.schema.displacement_vectors)
+        # 5. Fast 2-Probe Orthogonal Kinematic Basis Discovery on Level 0 (Skipped on Levels 2..K!)
+        probe_act = self.hypotheses.next_probe(
+            move_actions, self.schema.displacement_vectors, schema_frozen=self.schema.frozen
+        )
         if probe_act is not None and not self.dead_table.is_dead(curr_hash, probe_act, 0, 0, self.current_level):
             self.last_action_id = probe_act
             return probe_act, {}
 
-        # 6. Symbolic + CEGIS World-Model + Qwen 32B AWQ Planning
+        # 6. Symbolic + CEGIS World-Model + BFWS + Qwen 32B AWQ Planning
         if av_pos is not None and self.schema.displacement_vectors and self.pacer.has_compute_budget():
             obstacles = self._build_obstacle_set(arr)
             goals = self._find_candidate_goals(arr, av_pos)
 
-            # A. Sokoban Box Push Planner
+            # A. Sokoban Box Push Planner (Multi-Box Hungarian A*)
             if self.confirmed_box_colors and goals:
+                bg = self.processor.induce_background_color(arr, self.learned_floor_color)
+                ents = self.processor.extract_entities(arr, bg_color=bg, ignore_bezel=True)
                 box_pts: Set[Tuple[int, int]] = set()
-                for bc in self.confirmed_box_colors:
-                    rs, cs = np.where(arr == bc)
-                    if len(rs) > 0:
-                        box_pts.add((int(round(float(rs.mean()))), int(round(float(cs.mean())))))
+                for e in ents:
+                    if e.color in self.confirmed_box_colors and e.mass <= 120:
+                        box_pts.add((int(round(e.centroid[0])), int(round(e.centroid[1]))))
                 if box_pts:
                     soko_plan = sokoban_bfs(
                         av_pos, box_pts, set(goals[:4]), obstacles, self.schema.displacement_vectors, arr.shape
@@ -471,8 +482,8 @@ class GeneralAgent:
                         self.last_action_id = first_act
                         return first_act, {}
 
-            # C. CEGIS Online Python World-Model Synthesis + In-Memory IW(2) Lookahead
-            if self.step_in_level >= 4 and self.step_in_level % 4 == 0:
+            # C. CEGIS Online Python World-Model Synthesis + In-Memory BFWS/IW(2) Lookahead
+            if self.step_in_level >= 3 and (self.synthesizer.verified_fn is None or self.step_in_level % 4 == 0):
                 self.synthesizer.synthesize_world_model(
                     self.learned_floor_color,
                     self.learned_avatar_colors,
@@ -486,6 +497,8 @@ class GeneralAgent:
                     avail,
                     goals[0] if goals else None,
                     self.learned_avatar_colors,
+                    dead_table=self.dead_table,
+                    level_idx=self.current_level,
                 )
                 if iw_plan:
                     first_act = iw_plan[0]
@@ -516,7 +529,7 @@ class GeneralAgent:
                     vectors=self.schema.displacement_vectors,
                     walls=self.confirmed_wall_colors,
                     hazards=self.confirmed_hazard_colors,
-                    entities_summary=f"goals={goals[:4]} | graph={ent_graph}",
+                    entities_summary=f"goals={goals[:4]} | roles={self.hypotheses.color_semantics} | graph={ent_graph}",
                     available_actions=avail,
                 )
                 sub = llm.infer_subgoal(prompt)
