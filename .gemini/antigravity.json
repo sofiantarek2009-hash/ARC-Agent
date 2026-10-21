@@ -1,9 +1,0 @@
-{
-  "skills": {
-    "mil-design-eng": "Encodes Emil Kowalski’s philosophy on UI polish. Use this to make decisions about CSS-first animations, layout shifts, transform/opacity optimizations, easing curves (like the [0.23, 1, 0.32, 1] cubic bezier we used on the Urgency Band), and making components feel incredibly snappy.",
-    "impeccable": "A highly rigorous UI/UX auditing skill. Use this when asked to critique, audit, or redesign landing pages, dashboards, or components to ensure they have the right visual hierarchy, cognitive load balance, and don't look like generic SaaS templates.",
-    "ui-ux-pro-max": "A massive design intelligence library containing hundreds of color palettes, font pairings, interaction states, and component architectures for modern stacks (Next.js, Tailwind, shadcn/ui).",
-    "modern-web-guidance": "A strict set of rules for using the absolute latest web APIs rather than outdated patterns (e.g., using native CSS scroll-driven animations, :has(), View Transitions, and optimizing Core Web Vitals).",
-    "design-taste-frontend": "My 'anti-slop' design skill. Use this to ensure that interfaces feel bespoke, heavily art-directed, and avoid that 'templated' look, specifically tailored for landing pages and high-end portfolios."
-  }
-}
