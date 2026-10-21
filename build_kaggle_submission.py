@@ -20,9 +20,9 @@ def main() -> None:
                 continue
             rel = p.relative_to(ROOT)
             data = p.read_bytes()
-            f.write(len(str(rel)).to_bytes(2, "byteorder"))
+            f.write(len(str(rel)).to_bytes(2, "little"))
             f.write(str(rel).encode("utf-8"))
-            f.write(len(data).to_bytes(4, "byteorder"))
+            f.write(len(data).to_bytes(4, "little"))
             f.write(data)
     payload_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     print(f"[PACK] Packed override modules: {len(payload_b64):,} chars base64")
