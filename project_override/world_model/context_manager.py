@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class ContextManager:
@@ -8,7 +8,7 @@ class ContextManager:
     - Immutable System Prefix (KV-cache anchored)
     - Tier 1: Episodic Ring Buffer
     - Tier 2: Compacted Causal Summary (Hysteresis band: High=1900 tokens -> Low=1100 tokens)
-    - Tier 3: Confirmed Physical Laws & Hazards
+    - Tier 3: Confirmed Physical Laws, Remote Triggers & Hazards
     - Tier 4: Cross-Level Schema & Reflexion Post-Mortems
     """
 
@@ -45,9 +45,10 @@ class ContextManager:
         raw_text = "\n".join(self.tier2_summaries + list(self.tier1_episodic))
         if self.estimate_tokens(self.SYSTEM_PREFIX + raw_text) <= self.high_water_tokens:
             return
-        # Compact oldest episodic traces into a single causal digest until under low_water_tokens
         compacted_chunk = []
-        while len(self.tier1_episodic) > 6:
+        while len(self.tier1_episodic) > 6 and self.estimate_tokens(
+            self.SYSTEM_PREFIX + "\n".join(self.tier2_summaries + list(self.tier1_episodic))
+        ) > self.low_water_tokens:
             compacted_chunk.append(self.tier1_episodic.popleft())
         if compacted_chunk:
             digest = f"[Compacted {len(compacted_chunk)} steps: {compacted_chunk[0]} .. {compacted_chunk[-1]}]"

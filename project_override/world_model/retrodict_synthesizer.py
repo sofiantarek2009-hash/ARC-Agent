@@ -16,9 +16,8 @@ logger = logging.getLogger(__name__)
 
 def _install_pure_pytorch_awq_fallback() -> None:
     """
-    If Kaggle's offline Python 3.13 container lacks `autoawq`, this registers a
-    pure-PyTorch GPU 4-bit AWQ dequantizer so Qwen 2.5 Coder 32B AWQ loads and runs
-    natively on Dual T4 (17.5 GB compressed in VRAM) without external compiled wheels.
+    Registers a pure-PyTorch GPU 4-bit AWQ dequantizer if `autoawq` is absent in Kaggle's
+    offline Python 3.13 container, enabling Qwen 2.5 Coder 32B AWQ on Dual T4 out-of-the-box.
     """
     try:
         import awq  # noqa: F401
@@ -29,7 +28,6 @@ def _install_pure_pytorch_awq_fallback() -> None:
     try:
         import torch
         import torch.nn as nn
-        import torch.nn.functional as F
         from transformers.quantizers import AutoHfQuantizer, HfQuantizer
 
         class TorchAWQLinear(nn.Module):
@@ -63,7 +61,6 @@ def _install_pure_pytorch_awq_fallback() -> None:
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 shifts = self._shifts.to(self.qweight.device)
-                # Unpack 4-bit AWQ weights & zeros on-the-fly in GPU registers
                 w_unpacked = torch.bitwise_and(
                     torch.bitwise_right_shift(self.qweight.unsqueeze(-1), shifts), 0x0F
                 ).reshape(self.in_features, self.out_features)
@@ -209,10 +206,10 @@ class OfflineLLMRuntime:
                 self.is_loaded = False
                 return False
 
-    def generate_text(self, prompt: str, max_new_tokens: int = 160, timeout_s: float = 12.0) -> Optional[str]:
+    def generate_text(self, prompt: str, max_new_tokens: int = 180, timeout_s: float = 14.0) -> Optional[str]:
         if not self.ensure_loaded():
             return None
-        if not self._INFERENCE_LOCK.acquire(timeout=1.5):
+        if not self._INFERENCE_LOCK.acquire(timeout=2.0):
             return None
         try:
             import torch
@@ -232,6 +229,7 @@ class OfflineLLMRuntime:
                     **inputs,
                     max_new_tokens=max_new_tokens,
                     do_sample=False,
+                    use_cache=True,
                     pad_token_id=self.tokenizer.eos_token_id,
                 )
             gen_ids = out[0][inputs["input_ids"].shape[1]:]
@@ -256,9 +254,8 @@ class OfflineLLMRuntime:
 
 class RetrodictWorldModelSynthesizer:
     """
-    CEGIS (Counterexample-Guided Inductive Synthesis) World Model Engine.
-    Synthesizes Python `predict_next_grid(grid, action, data)` from observed transitions,
-    validates in ASTSandbox, and runs in-memory Width-1 Iterated Width IW(1) planning!
+    Dual-Mode CEGIS (Symbolic + Qwen 2.5 Coder 32B AWQ Counterexample-Guided Refinement)
+    World Model Engine + Width-1 Iterated Width IW(1) Planner.
     """
 
     def __init__(self):
@@ -288,7 +285,6 @@ class RetrodictWorldModelSynthesizer:
         box_colors: Set[int],
         vectors: Dict[int, Tuple[int, int]],
     ) -> Optional[Callable]:
-        """Synthesizes and verifies a fast executable Python world model from induced physics."""
         if floor_color is None or not avatar_colors or not vectors:
             return None
 
@@ -308,7 +304,6 @@ def predict_next_grid(grid, action, data=None):
     pts = np.argwhere(mask)
     if len(pts) == 0:
         return grid
-    # Check if destination cells are free or pushable
     for r, c in pts:
         nr, nc = int(r + dr), int(c + dc)
         if not (4 <= nr < h - 4 and 4 <= nc < w - 4):
@@ -325,12 +320,40 @@ def predict_next_grid(grid, action, data=None):
     return nxt
 """
         fn = ASTSandbox.validate_and_compile(code_template)
+        counterexample = None
         if fn is not None and len(self.transitions) >= 2:
-            acc, _ = ASTSandbox.evaluate_retrodiction(fn, self.transitions)
-            if acc >= 0.75:
+            acc, counterexample = ASTSandbox.evaluate_retrodiction(fn, self.transitions)
+            if acc >= 0.80:
                 self.verified_fn = fn
                 self.verified_code = code_template
                 return fn
+
+        # If symbolic template has counterexample mismatch, invoke Qwen 2.5 Coder 32B AWQ CEGIS Refinement!
+        llm = OfflineLLMRuntime.get_instance()
+        if llm.ensure_loaded() and len(self.transitions) >= 2:
+            cegis_prompt = (
+                "Write ONLY a pure Python function `def predict_next_grid(grid, action, data=None):` "
+                "using `np` (no imports) that predicts the next 64x64 int8 grid.
+"
+                f"Induced parameters: floor={floor_color}, avatar={avatar_colors}, walls={wall_colors}, "
+                f"boxes={box_colors}, vectors={vectors}.
+"
+                f"Counterexample on baseline template: {counterexample}
+"
+                "Return ONLY valid Python code inside ```python ... ```."
+            )
+            resp = llm.generate_text(cegis_prompt, max_new_tokens=220)
+            if resp:
+                m = re.search(r"```(?:python)?\s*(def predict_next_grid.*?)```", resp, re.DOTALL)
+                cand_code = m.group(1).strip() if m else resp.strip()
+                llm_fn = ASTSandbox.validate_and_compile(cand_code)
+                if llm_fn is not None:
+                    acc2, _ = ASTSandbox.evaluate_retrodiction(llm_fn, self.transitions)
+                    if acc2 >= 0.75:
+                        self.verified_fn = llm_fn
+                        self.verified_code = cand_code
+                        return llm_fn
+
         return fn
 
     def plan_iw1_lookahead(
@@ -341,10 +364,6 @@ def predict_next_grid(grid, action, data=None):
         avatar_colors: Set[int],
         max_expansions: int = 120,
     ) -> Optional[List[int]]:
-        """
-        Width-1 Iterated Width IW(1) simulated lookahead over the synthesized Python world model.
-        Finds multi-step trajectories to novel states or target overlap without spending real steps.
-        """
         if self.verified_fn is None or not avatar_colors:
             return None
         moves = [a for a in available_actions if a in (1, 2, 3, 4)]

@@ -11,7 +11,9 @@ FORBIDDEN_AST_NODES = (
     ast.Delete,
 )
 
-FORBIDDEN_NAMES = {"eval", "exec", "open", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals"}
+FORBIDDEN_NAMES = {
+    "eval", "exec", "open", "compile", "__import__", "getattr", "setattr", "delattr", "globals", "locals"
+}
 
 
 class ASTSandbox:
@@ -61,10 +63,6 @@ class ASTSandbox:
         fn: Callable,
         transitions: List[Tuple[np.ndarray, int, Dict[str, Any], np.ndarray]],
     ) -> Tuple[float, Optional[str]]:
-        """
-        Tests synthesized predict_next_grid(grid, action, data) against historical transitions.
-        Returns (accuracy_0_to_1, first_counterexample_diff_str).
-        """
         if not transitions:
             return 0.0, None
         passed = 0

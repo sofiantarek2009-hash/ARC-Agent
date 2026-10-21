@@ -56,7 +56,6 @@ class DihedralSymmetrySolver:
         ch, cw = core.shape
         clicks: List[Tuple[int, int]] = []
 
-        # 1. Vertical split (left vs right)
         half_w = cw // 2
         left = core[:, :half_w - 1]
         right = core[:, cw - left.shape[1]:]
@@ -65,13 +64,11 @@ class DihedralSymmetrySolver:
                 diff = t_left != right
                 n_diff = int(np.sum(diff))
                 if 1 <= n_diff <= 48:
-                    # Click where reference has foreground and editable panel has background (or vice versa)
                     rs, cs = np.where(diff)
                     for r, c in zip(rs, cs):
                         clicks.append((int(r + bezel_px), int(c + bezel_px + (cw - left.shape[1]))))
                     return clicks
 
-        # 2. Horizontal split (top vs bottom)
         half_h = ch // 2
         top = core[:half_h - 1, :]
         bot = core[ch - top.shape[0]:, :]
@@ -89,20 +86,19 @@ class DihedralSymmetrySolver:
 
 
 class LatentMemoryMatcher:
-    """Tracks hidden-state tile reveals in Concentration / Memory-Match games (e.g. mm01-mm05)."""
+    """Tracks hidden-state tile reveals in Concentration / Memory-Match games."""
 
     def __init__(self):
         self.known_tiles: Dict[Tuple[int, int], int] = {}
-        self.matched_Positions: Set[Tuple[int, int]] = set()
+        self.matched_positions: Set[Tuple[int, int]] = set()
 
     def reset(self) -> None:
         self.known_tiles.clear()
-        self.matched_Positions.clear()
+        self.matched_positions.clear()
 
     def observe_reveal(
         self, prev_grid: np.ndarray, curr_grid: np.ndarray, click_xy: Tuple[int, int], bg_color: int
     ) -> Optional[Tuple[int, int]]:
-        """Records revealed color at click_xy; if a matching partner is known, returns its (x, y)!”"""
         cx, cy = click_xy
         f0 = np.asarray(prev_grid, dtype=np.int8)
         f1 = np.asarray(curr_grid, dtype=np.int8)
@@ -111,13 +107,12 @@ class LatentMemoryMatcher:
         new_color = int(f1[cy, cx])
         old_color = int(f0[cy, cx])
         if new_color != old_color and new_color != bg_color:
-            # Quantize to 4px tile center
             key = (int(round(cx / 4.0) * 4), int(round(cy / 4.0) * 4))
             for other_xy, c in list(self.known_tiles.items()):
                 if c == new_color and abs(other_xy[0] - key[0]) + abs(other_xy[1] - key[1]) >= 4:
-                    if other_xy not in self.matched_Positions:
-                        self.matched_Positions.add(other_xy)
-                        self.matched_Positions.add(key)
+                    if other_xy not in self.matched_positions:
+                        self.matched_positions.add(other_xy)
+                        self.matched_positions.add(key)
                         return other_xy
             self.known_tiles[key] = new_color
         return None

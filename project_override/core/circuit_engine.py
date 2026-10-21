@@ -16,12 +16,11 @@ class AC3CircuitSolver:
         if int(np.sum(fg)) < 24:
             return None
 
-        # Check periodicity k in {6, 8, 10, 12}
         best_k = 0
         for k in (6, 8, 10, 12):
             if core.shape[0] >= 3 * k and core.shape[1] >= 3 * k:
-                row_Lines = sum(1 for r in range(k, core.shape[0], k) if np.mean(core[r, :] == core[0, :]) > 0.7)
-                if row_Lines >= 2:
+                row_lines = sum(1 for r in range(k, core.shape[0], k) if np.mean(core[r, :] == core[0, :]) > 0.7)
+                if row_lines >= 2:
                     best_k = k
                     break
         if best_k == 0:

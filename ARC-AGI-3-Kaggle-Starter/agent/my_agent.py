@@ -14,7 +14,6 @@ from agents.agent import Agent
 from agents.structs import FrameData, GameAction, GameState
 from project_override.orchestration.general_agent import GeneralAgent
 
-# Throttle 110 concurrent Swarm threads to 8 active compute workers on Kaggle 4-vCPU VM
 _COMPUTE_SEMAPHORE = threading.BoundedSemaphore(8)
 
 

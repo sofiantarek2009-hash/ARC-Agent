@@ -40,7 +40,7 @@ class DeadSignatureTable:
 
     def __init__(self, ring_size: int = 24):
         self.dead_set: Set[int] = set()
-        self.death_set: Set[int] = set()  # Never cleared on RESET
+        self.death_set: Set[int] = set()
         self.ring_buffer: deque = deque(maxlen=ring_size)
         self.transitions: Dict[int, Dict[Tuple[int, int, int], int]] = {}
         self.state_grids: Dict[int, np.ndarray] = {}
@@ -96,7 +96,6 @@ class DeadSignatureTable:
         self.ring_buffer.append(post_hash)
 
     def update_novelty(self, grid: np.ndarray) -> int:
-        """Width-1 Iterated Width IW(1) novelty evaluation over (row, col, color) atoms."""
         arr = np.asarray(grid, dtype=np.int8)
         new_count = 0
         for r in range(4, arr.shape[0] - 4, 2):
@@ -139,10 +138,6 @@ class DeadSignatureTable:
         candidate_actions: List[int],
         level_idx: int = 0,
     ) -> Optional[List[int]]:
-        """
-        Empirical Graph BFS: Finds shortest path in known transition graph to a state
-        with an untried non-dead action, prioritizing high IW(1) novelty states.
-        """
         if not candidate_actions:
             return None
         tried_here = {k[0] for k in self.transitions.get(current_hash, {}).keys()}

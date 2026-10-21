@@ -1,15 +1,15 @@
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Optional
 
 
 class SystemPacer:
     """
     Tracks active CPU/GPU compute time per step rather than wall-clock wait time
-    so 110 concurrent Swarm threads never suffer false-positive timeouts.
+    so concurrent Swarm threads never suffer false-positive timeouts.
     """
 
     GLOBAL_START_TIME = time.time()
-    GLOBAL_HARD_LIMIT_S = 31800.0  # 8h 50m safety margin within 9h Kaggle limit
+    GLOBAL_HARD_LIMIT_S = 31800.0
 
     def __init__(self, max_level_compute_s: float = 45.0):
         self.max_level_compute_s = max_level_compute_s

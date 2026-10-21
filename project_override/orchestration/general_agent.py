@@ -38,6 +38,7 @@ class GeneralAgent:
         self.context = ContextManager(high_water_tokens=1900, low_water_tokens=1100)
         self.synthesizer = RetrodictWorldModelSynthesizer()
         self.memory_matcher = LatentMemoryMatcher()
+        self.gf2_solver = GF2ToggleSolver()
         self.pacer = SystemPacer(max_level_compute_s=45.0)
 
         self.current_level: int = 0
@@ -49,7 +50,6 @@ class GeneralAgent:
         self.last_click_xy: Tuple[int, int] = (0, 0)
         self.last_delta_omega: Optional[int] = None
 
-        # Induced Level-Invariant Physics
         self.learned_floor_color: Optional[int] = None
         self.learned_avatar_colors: Set[int] = set()
         self.learned_avatar_color: Optional[int] = None
@@ -57,16 +57,12 @@ class GeneralAgent:
         self.confirmed_wall_colors: Set[int] = set()
         self.confirmed_hazard_colors: Set[int] = set()
         self.confirmed_box_colors: Set[int] = set()
+        self.priority_remote_subgoals: List[Tuple[int, int]] = []
         self.visited_cells: Set[Tuple[int, int]] = set()
         self.visited_goals: Set[Tuple[int, int]] = set()
         self.transition_history: List[Tuple[np.ndarray, int, np.ndarray, int]] = []
 
     def on_game_over(self, final_grid: Optional[np.ndarray] = None) -> None:
-        """
-        Called right before RESET on GAME_OVER.
-        Permanently blacklists the fatal (state_hash, action) signature and inducts
-        the hazard tile color that killed the avatar so we never die to it again!
-        """
         if self.prev_hash is not None and self.last_action_id is not None:
             cx, cy = self.last_click_xy if self.last_action_id == 6 else (0, 0)
             self.dead_table.record_death(
@@ -109,7 +105,9 @@ class GeneralAgent:
         self.dead_table.reset_level(clear_deaths=True)
         self.synthesizer.reset_level(keep_verified=True)
         self.memory_matcher.reset()
+        self.gf2_solver.reset()
         self.pacer.reset_level()
+        self.priority_remote_subgoals.clear()
         self.visited_cells.clear()
         self.visited_goals.clear()
         self.transition_history.clear()
@@ -152,7 +150,6 @@ class GeneralAgent:
                 self.confirmed_wall_colors.add(c)
 
     def _retroactive_wall_scan(self) -> None:
-        """Retroactively inducts walls from Step-0 blocked probes once vectors are known."""
         for pre_g, act_id, _, delta in self.transition_history:
             if delta == 0 and act_id in self.schema.displacement_vectors:
                 self._induce_blocking_wall(pre_g, act_id)
@@ -174,6 +171,11 @@ class GeneralAgent:
         strides = [max(abs(v[0]), abs(v[1])) for v in self.schema.displacement_vectors.values() if v != (0, 0)]
         s = max(1, min(strides)) if strides else 1
 
+        ordered_goals: List[Tuple[int, int]] = []
+        for rem_rc in self.priority_remote_subgoals:
+            if (rem_rc[0] // s, rem_rc[1] // s) not in self.visited_goals:
+                ordered_goals.append(rem_rc)
+
         candidates: List[Tuple[float, Tuple[int, int]]] = []
         blocked_colors = self.learned_avatar_colors | self.confirmed_wall_colors | self.confirmed_hazard_colors
         for ent in entities:
@@ -188,7 +190,6 @@ class GeneralAgent:
                 score = ent.mass * 0.4 + dist * 0.25
                 candidates.append((score, (gr, gc)))
 
-        # Also include topological cavities as goal candidates
         for cr, cc in JordanCurveCavityInducer.find_cavities(grid, bg_color=bg, bezel_px=4)[:4]:
             norm_g = (cr // s, cc // s)
             if norm_g not in self.visited_goals:
@@ -196,28 +197,26 @@ class GeneralAgent:
                 candidates.append((dist * 0.2, (cr, cc)))
 
         candidates.sort(key=lambda x: x[0])
-        return [pos for _, pos in candidates]
+        ordered_goals.extend([pos for _, pos in candidates])
+        return ordered_goals
 
     def _select_smart_click(
         self, grid: np.ndarray, arena_hash: int
     ) -> Tuple[int, Dict[str, int]]:
         bg = self.processor.induce_background_color(grid, self.learned_floor_color)
 
-        # 1. D4 Split-Panel Symmetry / Odd-One-Out Completion
         for r, c in SplitPanelSymmetrySolver.find_asymmetric_clicks(grid, bg_color=bg, bezel_px=4):
             x, y = int(c), int(r)
             if not self.dead_table.is_dead(arena_hash, 6, x, y, self.current_level):
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
-        # 2. Jordan Curve Topological Cavity Clicks
         for r, c in JordanCurveCavityInducer.find_cavities(grid, bg_color=bg, bezel_px=4):
             x, y = int(c), int(r)
             if not self.dead_table.is_dead(arena_hash, 6, x, y, self.current_level):
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
-        # 3. AC-3 Periodic Circuit / Pipe Tile Clicks
         circuit_clicks = AC3CircuitSolver.detect_periodic_circuit_clicks(grid, bg_color=bg, bezel_px=4)
         if circuit_clicks:
             for r, c in circuit_clicks:
@@ -226,7 +225,6 @@ class GeneralAgent:
                     self.last_click_xy = (x, y)
                     return 6, {"x": x, "y": y}
 
-        # 4. Component-Priority Foreground Clicks (ranked by rarity and distinctiveness)
         entities = self.processor.extract_entities(grid, bg_color=bg, ignore_bezel=True)
         color_counts: Dict[int, int] = {}
         for e in entities:
@@ -246,7 +244,6 @@ class GeneralAgent:
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
-        # 5. Multi-resolution lattice sweep
         h, w = grid.shape
         for stride in (6, 4, 3):
             for r in range(6, h - 6, stride):
@@ -308,6 +305,7 @@ class GeneralAgent:
 
             if self.last_action_id == 6 and delta > 0:
                 bg = self.processor.induce_background_color(arr, self.learned_floor_color)
+                self.gf2_solver.record_click_effect(self.prev_grid, arr, self.last_click_xy)
                 match_xy = self.memory_matcher.observe_reveal(self.prev_grid, arr, self.last_click_xy, bg)
                 if match_xy is not None:
                     self.macro_queue.push_plan([(6, {"x": int(match_xy[0]), "y": int(match_xy[1])})])
@@ -318,13 +316,18 @@ class GeneralAgent:
                         self.prev_grid, arr, self.learned_avatar_colors if self.learned_avatar_colors else None
                     )
                     if rigid is not None:
-                        fl_c, av_colors, (dr, dc), _, pushed_boxes = rigid
+                        fl_c, av_colors, (dr, dc), _, pushed_boxes, remote_triggers = rigid
                         self.learned_floor_color = fl_c
                         self.learned_avatar_colors |= av_colors
                         self.learned_avatar_color = min(self.learned_avatar_colors)
                         if pushed_boxes:
                             self.confirmed_box_colors |= pushed_boxes
                             self.learned_game_modality = "SOKOBAN"
+                        if remote_triggers:
+                            for r_trig in remote_triggers:
+                                if r_trig not in self.priority_remote_subgoals:
+                                    self.priority_remote_subgoals.insert(0, r_trig)
+                            self.visited_goals.clear()
                         self.schema.record_vector(self.last_action_id, (dr, dc))
                         self._retroactive_wall_scan()
                         if max(abs(dr), abs(dc)) > 8:
@@ -393,12 +396,12 @@ class GeneralAgent:
             self.last_action_id = probe_act
             return probe_act, {}
 
-        # 6. Symbolic + CEGIS World-Model Planning
+        # 6. Symbolic + CEGIS World-Model + Qwen 32B AWQ Planning
         if av_pos is not None and self.schema.displacement_vectors and self.pacer.has_compute_budget():
             obstacles = self._build_obstacle_set(arr)
             goals = self._find_candidate_goals(arr, av_pos)
 
-            # A. Sokoban Box Push Planner if pushable boxes were confirmed
+            # A. Sokoban Box Push Planner
             if self.confirmed_box_colors and goals:
                 box_pts: Set[Tuple[int, int]] = set()
                 for bc in self.confirmed_box_colors:
@@ -416,7 +419,7 @@ class GeneralAgent:
                             self.last_action_id = first_act
                             return first_act, {}
 
-            # B. Navigate to candidate goals via A* / Ice-Slide + optional Action-5 Interact at destination
+            # B. Navigate to candidate goals via A* / Ice-Slide + optional Action-5 Interact
             for goal in goals[:5]:
                 if self.learned_game_modality == "SLIDE":
                     plan = ice_slide_bfs(av_pos, goal, obstacles, self.schema.displacement_vectors, arr.shape)
@@ -466,16 +469,18 @@ class GeneralAgent:
                     self.last_action_id = first_act
                     return first_act, {}
 
-            # E. Offline Qwen 32B AWQ Subgoal Architect (invoked periodically on novel/stagnant levels)
-            if self.step_in_level >= 10 and self.step_in_level % 12 == 0:
+            # E. Offline Qwen 32B AWQ Subgoal Architect (with ASCII Entity Graph + Franzen 4-Tier Context)
+            if self.step_in_level >= 6 and self.step_in_level % 8 == 0:
                 llm = OfflineLLMRuntime.get_instance()
+                bg = self.processor.induce_background_color(arr, self.learned_floor_color)
+                ent_graph = self.processor.encode_ascii_entity_graph(arr, bg_color=bg)
                 prompt = self.context.build_prompt(
                     level_idx=self.current_level,
                     av_pos=av_pos,
                     vectors=self.schema.displacement_vectors,
                     walls=self.confirmed_wall_colors,
                     hazards=self.confirmed_hazard_colors,
-                    entities_summary=f"goals={goals[:4]}",
+                    entities_summary=f"goals={goals[:4]} | graph={ent_graph}",
                     available_actions=avail,
                 )
                 sub = llm.infer_subgoal(prompt)

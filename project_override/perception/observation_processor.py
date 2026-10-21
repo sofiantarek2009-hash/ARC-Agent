@@ -30,7 +30,6 @@ def board_to_px_coord(br: int, bc: int, scale: int, shape: Tuple[int, int] = (64
 
 
 def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
-    """Kuhn-Munkres / min-cost bipartite matching for multi-entity tracking."""
     if cost_matrix.size == 0:
         return []
     n_rows, n_cols = cost_matrix.shape
@@ -51,7 +50,7 @@ def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
 
 
 class ObservationProcessor:
-    """Zero-color-assumption CCL + Rigid-Body Composite Sprite & Box Push Tracker."""
+    """Zero-color-assumption CCL + Rigid-Body Composite Sprite + Remote Causal Trigger Detector."""
 
     def __init__(self, bezel_px: int = 4):
         self.bezel_px = bezel_px
@@ -124,6 +123,16 @@ class ObservationProcessor:
                 ent_id += 1
         return entities
 
+    def encode_ascii_entity_graph(self, grid: np.ndarray, bg_color: int) -> str:
+        """Compact RLE + Entity Graph representation for Qwen 32B context efficiency."""
+        ents = self.extract_entities(grid, bg_color=bg_color, ignore_bezel=True)
+        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:18]
+        parts = [
+            f"E{e.id}(c={e.color},m={e.mass},rc=({int(round(e.centroid[0]))},{int(round(e.centroid[1]))}))"
+            for e in ents_sorted
+        ]
+        return "; ".join(parts)
+
     def compute_delta_omega(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> int:
         a = np.asarray(prev_grid, dtype=np.int8)
         b = np.asarray(curr_grid, dtype=np.int8)
@@ -140,11 +149,11 @@ class ObservationProcessor:
         prev_grid: np.ndarray,
         curr_grid: np.ndarray,
         known_avatar_colors: Optional[Set[int]] = None,
-    ) -> Optional[Tuple[int, Set[int], Tuple[int, int], Tuple[float, float], Set[int]]]:
+    ) -> Optional[Tuple[int, Set[int], Tuple[int, int], Tuple[float, float], Set[int], List[Tuple[int, int]]]]:
         """
-        Universal Rigid-Body Differential Tracker.
-        Returns: (floor_color, avatar_colors_set, (dr, dc), post_centroid, pushed_box_colors)
-        Distinguishes multi-color composite avatars (e.g. ls20) from pushed Sokoban boxes!
+        Universal Rigid-Body Differential Tracker + Remote Causal Trigger Detector.
+        Returns:
+          (floor_color, avatar_colors, (dr, dc), post_centroid, pushed_box_colors, remote_changed_centroids)
         """
         f0 = np.asarray(prev_grid, dtype=np.int8)
         f1 = np.asarray(curr_grid, dtype=np.int8)
@@ -159,7 +168,7 @@ class ObservationProcessor:
             diff = diff & mask
 
         total_changed = int(np.sum(diff))
-        if total_changed < 2 or total_changed > 800:
+        if total_changed < 2 or total_changed > 900:
             return None
 
         best_floor = None
@@ -182,7 +191,7 @@ class ObservationProcessor:
 
         post_center = b_post.mean(axis=0)
         dists = np.linalg.norm(b_pre_all - post_center, axis=1)
-        near_mask = dists <= 20.0
+        near_mask = dists <= 18.0
         b_pre = b_pre_all[near_mask] if np.any(near_mask) else b_pre_all
 
         pre_center = b_pre.mean(axis=0)
@@ -191,12 +200,20 @@ class ObservationProcessor:
         if dr == 0 and dc == 0:
             return None
 
-        # Check if an entity of a DIFFERENT color than known_avatar_colors was pushed ahead
+        # Detect remote causal changes (e.g. stepping on a key/switch opens a distant door/gate)
+        all_diff_pts = np.argwhere(diff)
+        remote_dists = np.linalg.norm(all_diff_pts - post_center, axis=1)
+        remote_pts = all_diff_pts[remote_dists > 16.0]
+        remote_centroids: List[Tuple[int, int]] = []
+        if len(remote_pts) >= 2:
+            rr = int(round(float(remote_pts[:, 0].mean())))
+            rc = int(round(float(remote_pts[:, 1].mean())))
+            remote_centroids.append((rr, rc))
+
         pushed_box_colors: Set[int] = set()
         moving_colors = {int(c) for c in np.unique(f1[b_post[:, 0], b_post[:, 1]]) if int(c) != best_floor}
         if known_avatar_colors:
             extra_colors = moving_colors - known_avatar_colors
-            # If known avatar moved into pixels previously occupied by extra_colors, it's a pushed box!
             for ec in extra_colors:
                 overlap = int(np.sum(diff & (f0 == ec) & np.isin(f1, list(known_avatar_colors))))
                 if overlap > 0:
@@ -208,4 +225,11 @@ class ObservationProcessor:
         if not avatar_colors:
             return None
 
-        return best_floor, avatar_colors, (dr, dc), (float(post_center[0]), float(post_center[1])), pushed_box_colors
+        return (
+            best_floor,
+            avatar_colors,
+            (dr, dc),
+            (float(post_center[0]), float(post_center[1])),
+            pushed_box_colors,
+            remote_centroids,
+        )

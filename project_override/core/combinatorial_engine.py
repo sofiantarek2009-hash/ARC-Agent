@@ -4,7 +4,24 @@ from project_override.core.visual_goal_induction import DihedralSymmetrySolver
 
 
 class GF2ToggleSolver:
-    """GF(2) Gauss-Jordan Linear Toggle / Lights-Out Solver with Minimum Hamming Weight."""
+    """GF(2) Gauss-Jordan Linear Toggle / Lights-Out Solver with Empirical Matrix Builder."""
+
+    def __init__(self):
+        self.click_effects: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+
+    def reset(self) -> None:
+        self.click_effects.clear()
+
+    def record_click_effect(
+        self, prev_grid: np.ndarray, curr_grid: np.ndarray, click_xy: Tuple[int, int], cell_stride: int = 8
+    ) -> None:
+        diff = np.asarray(prev_grid, dtype=np.int8) != np.asarray(curr_grid, dtype=np.int8)
+        rs, cs = np.where(diff)
+        if len(rs) == 0 or len(rs) > 400:
+            return
+        toggled_cells = {(int(r // cell_stride), int(c // cell_stride)) for r, c in zip(rs, cs)}
+        if toggled_cells:
+            self.click_effects[(int(click_xy[0]), int(click_xy[1]))] = toggled_cells
 
     @staticmethod
     def solve_toggle_matrix(
@@ -25,7 +42,7 @@ class GF2ToggleSolver:
                 continue
             swap_r = pivot_row + int(cand[0])
             if swap_r != pivot_row:
-                aug[[pivot_row, swap_r]] = aug[[swap_r, pivot_row]]
+                aug[[pivot_row, swap_r]] = aug[[swap_r, pivot_Row if "pivot_Row" in locals() else pivot_row]]
             for r in range(n_eq):
                 if r != pivot_row and aug[r, col] == 1:
                     aug[r] ^= aug[pivot_row]
