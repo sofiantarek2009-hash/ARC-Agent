@@ -1,13 +1,14 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 from project_override.core.visual_goal_induction import DihedralSymmetrySolver
 
 
 class GF2ToggleSolver:
-    """GF(2) Gauss-Jordan Linear Toggle / Lights-Out Solver with Empirical Matrix Builder."""
+    """GF(2) Gauss-Jordan Linear Toggle / Lights-Out Solver with Live Auto-Solve Queueing."""
 
     def __init__(self):
         self.click_effects: Dict[Tuple[int, int], Set[Tuple[int, int]]] = {}
+        self.cell_stride: int = 8
 
     def reset(self) -> None:
         self.click_effects.clear()
@@ -15,6 +16,7 @@ class GF2ToggleSolver:
     def record_click_effect(
         self, prev_grid: np.ndarray, curr_grid: np.ndarray, click_xy: Tuple[int, int], cell_stride: int = 8
     ) -> None:
+        self.cell_stride = cell_stride
         diff = np.asarray(prev_grid, dtype=np.int8) != np.asarray(curr_grid, dtype=np.int8)
         rs, cs = np.where(diff)
         if len(rs) == 0 or len(rs) > 400:
@@ -22,6 +24,40 @@ class GF2ToggleSolver:
         toggled_cells = {(int(r // cell_stride), int(c // cell_stride)) for r, c in zip(rs, cs)}
         if toggled_cells:
             self.click_effects[(int(click_xy[0]), int(click_xy[1]))] = toggled_cells
+
+    def try_solve_current_board(self, grid: np.ndarray, bg_color: int) -> Optional[List[Tuple[int, int]]]:
+        """If enough toggle effects are recorded to span active foreground cells, solves Ax = b (mod 2)."""
+        if len(self.click_effects) < 3:
+            return None
+        s = self.cell_stride
+        arr = np.asarray(grid, dtype=np.int8)
+        active_cells: Set[Tuple[int, int]] = set()
+        for r in range(4, arr.shape[0] - 4):
+            for c in range(4, arr.shape[1] - 4):
+                if int(arr[r, c]) != bg_color:
+                    active_cells.add((r // s, c // s))
+        if not active_cells or len(active_cells) > 36:
+            return None
+
+        all_cells = sorted(set().union(*self.click_effects.values()) | active_cells)
+        cell_to_idx = {cell: idx for idx, cell in enumerate(all_cells)}
+        buttons = list(self.click_effects.keys())
+        A = np.zeros((len(all_cells), len(buttons)), dtype=np.int8)
+        b = np.zeros(len(all_cells), dtype=np.int8)
+
+        for j, btn in enumerate(buttons):
+            for cell in self.click_effects[btn]:
+                if cell in cell_to_idx:
+                    A[cell_to_idx[cell], j] = 1
+        for cell in active_cells:
+            if cell in cell_to_idx:
+                b[cell_to_idx[cell]] = 1
+
+        sol = self.solve_toggle_matrix(A, b)
+        if sol is None:
+            return None
+        clicks = [buttons[j] for j in range(len(buttons)) if int(sol[j]) == 1]
+        return clicks if clicks else None
 
     @staticmethod
     def solve_toggle_matrix(
@@ -42,7 +78,7 @@ class GF2ToggleSolver:
                 continue
             swap_r = pivot_row + int(cand[0])
             if swap_r != pivot_row:
-                aug[[pivot_row, swap_r]] = aug[[swap_r, pivot_Row if "pivot_Row" in locals() else pivot_row]]
+                aug[[pivot_row, swap_r]] = aug[[swap_r, pivot_row]]
             for r in range(n_eq):
                 if r != pivot_row and aug[r, col] == 1:
                     aug[r] ^= aug[pivot_row]

@@ -50,7 +50,7 @@ def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
 
 
 class ObservationProcessor:
-    """Zero-color-assumption CCL + Rigid-Body Composite Sprite + Remote Causal Trigger Detector."""
+    """Zero-color-assumption CCL + Motion-Anchored Sprite Tracker + Remote Trigger Detector."""
 
     def __init__(self, bezel_px: int = 4):
         self.bezel_px = bezel_px
@@ -124,9 +124,8 @@ class ObservationProcessor:
         return entities
 
     def encode_ascii_entity_graph(self, grid: np.ndarray, bg_color: int) -> str:
-        """Compact RLE + Entity Graph representation for Qwen 32B context efficiency."""
         ents = self.extract_entities(grid, bg_color=bg_color, ignore_bezel=True)
-        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:18]
+        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:20]
         parts = [
             f"E{e.id}(c={e.color},m={e.mass},rc=({int(round(e.centroid[0]))},{int(round(e.centroid[1]))}))"
             for e in ents_sorted
@@ -200,7 +199,6 @@ class ObservationProcessor:
         if dr == 0 and dc == 0:
             return None
 
-        # Detect remote causal changes (e.g. stepping on a key/switch opens a distant door/gate)
         all_diff_pts = np.argwhere(diff)
         remote_dists = np.linalg.norm(all_diff_pts - post_center, axis=1)
         remote_pts = all_diff_pts[remote_dists > 16.0]

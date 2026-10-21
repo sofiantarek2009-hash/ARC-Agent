@@ -46,6 +46,7 @@ class GeneralAgent:
         self.prev_grid: Optional[np.ndarray] = None
         self.prev_hash: Optional[int] = None
         self.prev_av_pos: Optional[Tuple[int, int]] = None
+        self.last_known_av_pos: Optional[Tuple[int, int]] = None
         self.last_action_id: Optional[int] = None
         self.last_click_xy: Tuple[int, int] = (0, 0)
         self.last_delta_omega: Optional[int] = None
@@ -89,6 +90,7 @@ class GeneralAgent:
         self.macro_queue.clear()
         self.prev_grid = None
         self.prev_hash = None
+        self.last_known_av_pos = None
         self.last_action_id = None
         self.last_delta_omega = None
         self.visited_goals.clear()
@@ -99,6 +101,7 @@ class GeneralAgent:
         self.prev_grid = None
         self.prev_hash = None
         self.prev_av_pos = None
+        self.last_known_av_pos = None
         self.last_action_id = None
         self.last_delta_omega = None
         self.macro_queue.clear()
@@ -114,6 +117,11 @@ class GeneralAgent:
         self.schema.freeze_on_level_clear()
 
     def _locate_avatar_centroid(self, grid: np.ndarray) -> Optional[Tuple[int, int]]:
+        """
+        Motion-Anchored Sprite Locator:
+        Avoids averaging unrelated static objects or HUD icons that share a color with the avatar
+        by filtering pixels to the coherent sprite cluster nearest `last_known_av_pos`.
+        """
         if not self.learned_avatar_colors:
             return None
         arr = np.asarray(grid, dtype=np.int8)
@@ -129,6 +137,12 @@ class GeneralAgent:
         pts = np.argwhere(mask)
         if len(pts) == 0:
             return None
+        if self.last_known_av_pos is not None:
+            anchor = np.array(self.last_known_av_pos, dtype=float)
+            dists = np.linalg.norm(pts - anchor, axis=1)
+            local_pts = pts[dists <= 14.0]
+            if len(local_pts) > 0:
+                pts = local_pts
         return (int(round(float(pts[:, 0].mean()))), int(round(float(pts[:, 1].mean()))))
 
     def _induce_blocking_wall(self, grid: np.ndarray, failed_action: int) -> None:
@@ -205,18 +219,35 @@ class GeneralAgent:
     ) -> Tuple[int, Dict[str, int]]:
         bg = self.processor.induce_background_color(grid, self.learned_floor_color)
 
+        # 0. GF(2) Linear Toggle / Lights-Out Auto-Solver
+        gf2_clicks = self.gf2_solver.try_solve_current_board(grid, bg_color=bg)
+        if gf2_clicks:
+            valid_gf2 = [
+                (cx, cy) for cx, cy in gf2_clicks
+                if not self.dead_table.is_dead(arena_hash, 6, cx, cy, self.current_level)
+            ]
+            if valid_gf2:
+                first_xy = valid_gf2[0]
+                if len(valid_gf2) > 1:
+                    self.macro_queue.push_plan([(6, {"x": int(x), "y": int(y)}) for x, y in valid_gf2[1:]])
+                self.last_click_xy = (int(first_xy[0]), int(first_xy[1]))
+                return 6, {"x": int(first_xy[0]), "y": int(first_xy[1])}
+
+        # 1. D4 Split-Panel Symmetry / Odd-One-Out Completion
         for r, c in SplitPanelSymmetrySolver.find_asymmetric_clicks(grid, bg_color=bg, bezel_px=4):
             x, y = int(c), int(r)
             if not self.dead_table.is_dead(arena_hash, 6, x, y, self.current_level):
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
+        # 2. Jordan Curve Topological Cavity Clicks
         for r, c in JordanCurveCavityInducer.find_cavities(grid, bg_color=bg, bezel_px=4):
             x, y = int(c), int(r)
             if not self.dead_table.is_dead(arena_hash, 6, x, y, self.current_level):
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
+        # 3. AC-3 Periodic Circuit / Pipe Tile Clicks
         circuit_clicks = AC3CircuitSolver.detect_periodic_circuit_clicks(grid, bg_color=bg, bezel_px=4)
         if circuit_clicks:
             for r, c in circuit_clicks:
@@ -225,6 +256,7 @@ class GeneralAgent:
                     self.last_click_xy = (x, y)
                     return 6, {"x": x, "y": y}
 
+        # 4. Component-Priority Foreground Clicks
         entities = self.processor.extract_entities(grid, bg_color=bg, ignore_bezel=True)
         color_counts: Dict[int, int] = {}
         for e in entities:
@@ -244,6 +276,7 @@ class GeneralAgent:
                 self.last_click_xy = (x, y)
                 return 6, {"x": x, "y": y}
 
+        # 5. Multi-resolution lattice sweep
         h, w = grid.shape
         for stride in (6, 4, 3):
             for r in range(6, h - 6, stride):
@@ -316,10 +349,11 @@ class GeneralAgent:
                         self.prev_grid, arr, self.learned_avatar_colors if self.learned_avatar_colors else None
                     )
                     if rigid is not None:
-                        fl_c, av_colors, (dr, dc), _, pushed_boxes, remote_triggers = rigid
+                        fl_c, av_colors, (dr, dc), post_cent, pushed_boxes, remote_triggers = rigid
                         self.learned_floor_color = fl_c
                         self.learned_avatar_colors |= av_colors
                         self.learned_avatar_color = min(self.learned_avatar_colors)
+                        self.last_known_av_pos = (int(round(post_cent[0])), int(round(post_cent[1])))
                         if pushed_boxes:
                             self.confirmed_box_colors |= pushed_boxes
                             self.learned_game_modality = "SOKOBAN"
@@ -342,6 +376,8 @@ class GeneralAgent:
         self.step_in_level += 1
 
         av_pos = self._locate_avatar_centroid(arr)
+        if av_pos is not None:
+            self.last_known_av_pos = av_pos
         self.prev_av_pos = av_pos
         strides = [max(abs(v[0]), abs(v[1])) for v in self.schema.displacement_vectors.values() if v != (0, 0)]
         s = max(1, min(strides)) if strides else 1
@@ -435,7 +471,7 @@ class GeneralAgent:
                         self.last_action_id = first_act
                         return first_act, {}
 
-            # C. CEGIS Online Python World-Model Synthesis + In-Memory IW(1) Lookahead
+            # C. CEGIS Online Python World-Model Synthesis + In-Memory IW(2) Lookahead
             if self.step_in_level >= 4 and self.step_in_level % 4 == 0:
                 self.synthesizer.synthesize_world_model(
                     self.learned_floor_color,
@@ -445,7 +481,7 @@ class GeneralAgent:
                     self.schema.displacement_vectors,
                 )
             if self.synthesizer.verified_fn is not None:
-                iw_plan = self.synthesizer.plan_iw1_lookahead(
+                iw_plan = self.synthesizer.plan_iw_lookahead(
                     arr,
                     avail,
                     goals[0] if goals else None,
@@ -498,8 +534,13 @@ class GeneralAgent:
                             self.last_action_id = 6
                             self.last_click_xy = (cx, cy)
                             return 6, {"x": cx, "y": cy}
+                    elif sub.get("subgoal") == "ACTION" and isinstance(sub.get("action_id"), int):
+                        aid = int(sub["action_id"])
+                        if aid in avail and not self.dead_table.is_dead(curr_hash, aid, 0, 0, self.current_level):
+                            self.last_action_id = aid
+                            return aid, {}
 
-        # 7. Empirical State-Graph BFS to nearest untried action (IW(1) Graph Explorer)
+        # 7. Empirical State-Graph BFS to nearest untried action (IW(1)/IW(2) Graph Explorer)
         all_discrete = [a for a in avail if a in (1, 2, 3, 4, 5, 7)]
         graph_plan = self.dead_table.bfs_to_unexplored_action(curr_hash, all_discrete, self.current_level)
         if graph_plan:

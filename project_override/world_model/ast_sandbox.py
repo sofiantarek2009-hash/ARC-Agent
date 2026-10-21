@@ -48,6 +48,7 @@ class ASTSandbox:
                     "any": any,
                     "all": all,
                     "round": round,
+                    "sorted": sorted,
                 },
                 "np": np,
             }
@@ -67,7 +68,7 @@ class ASTSandbox:
             return 0.0, None
         passed = 0
         counterexample = None
-        for pre_g, act_id, data, post_g in transitions[-10:]:
+        for pre_g, act_id, data, post_g in transitions[-12:]:
             try:
                 pred = fn(pre_g.copy(), int(act_id), data or {})
                 if isinstance(pred, np.ndarray) and pred.shape == post_g.shape:
@@ -86,4 +87,4 @@ class ASTSandbox:
                     counterexample = f"Action {act_id}: invalid return shape"
             except Exception as e:
                 counterexample = f"Action {act_id} raised {type(e).__name__}: {e}"
-        return passed / float(len(transitions[-10:])), counterexample
+        return passed / float(len(transitions[-12:])), counterexample

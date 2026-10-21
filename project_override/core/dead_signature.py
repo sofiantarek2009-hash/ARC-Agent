@@ -34,7 +34,7 @@ def pack_signature_64(
 
 class DeadSignatureTable:
     """
-    O(1) dead-action & fatal-action pruning + Empirical Transition Graph + IW(1) Novelty Table.
+    O(1) dead-action & fatal-action pruning + Empirical Transition Graph + IW(1)/IW(2) Novelty Table.
     Persists fatal GAME_OVER signatures across level resets.
     """
 
@@ -46,6 +46,7 @@ class DeadSignatureTable:
         self.state_grids: Dict[int, np.ndarray] = {}
         self.state_novelty: Dict[int, int] = {}
         self.seen_atoms: Set[Tuple[int, int, int]] = set()
+        self.seen_pairs: Set[Tuple[Tuple[int, int, int], Tuple[int, int, int]]] = set()
 
     def reset_level(self, clear_deaths: bool = False) -> None:
         self.ring_buffer.clear()
@@ -53,6 +54,7 @@ class DeadSignatureTable:
         self.state_grids.clear()
         self.state_novelty.clear()
         self.seen_atoms.clear()
+        self.seen_pairs.clear()
         if clear_deaths:
             self.death_set.clear()
             self.dead_set.clear()
@@ -96,14 +98,25 @@ class DeadSignatureTable:
         self.ring_buffer.append(post_hash)
 
     def update_novelty(self, grid: np.ndarray) -> int:
+        """Evaluates both IW(1) single-atom and IW(2) pairwise feature novelty."""
         arr = np.asarray(grid, dtype=np.int8)
         new_count = 0
-        for r in range(4, arr.shape[0] - 4, 2):
-            for c in range(4, arr.shape[1] - 4, 2):
-                atom = (r, c, int(arr[r, c]))
+        active_atoms = []
+        for r in range(4, arr.shape[0] - 4, 4):
+            for c in range(4, arr.shape[1] - 4, 4):
+                val = int(arr[r, c])
+                atom = (r, c, val)
+                active_atoms.append(atom)
                 if atom not in self.seen_atoms:
                     self.seen_atoms.add(atom)
-                    new_count += 1
+                    new_count += 2
+        if new_count == 0 and len(active_atoms) <= 64 and len(self.seen_pairs) < 8000:
+            for i in range(0, len(active_atoms), 2):
+                for j in range(i + 1, min(i + 6, len(active_atoms))):
+                    pair = (active_atoms[i], active_atoms[j])
+                    if pair not in self.seen_pairs:
+                        self.seen_pairs.add(pair)
+                        new_count += 1
         return new_count
 
     def is_dead(
@@ -150,16 +163,16 @@ class DeadSignatureTable:
         best_path: Optional[List[int]] = None
         best_score = -1e9
 
-        while queue and len(visited) < 350:
+        while queue and len(visited) < 400:
             sh, path = queue.popleft()
-            if len(path) >= 22:
+            if len(path) >= 24:
                 continue
             tried = {k[0] for k in self.transitions.get(sh, {}).keys()}
             for a in candidate_actions:
                 if not self.is_dead(sh, a, 0, 0, level_idx) and a not in tried:
                     cand_path = path + [a]
                     nov = self.state_novelty.get(sh, 0)
-                    score = nov * 2.0 - len(cand_path)
+                    score = nov * 2.5 - len(cand_path)
                     if score > best_score:
                         best_score = score
                         best_path = cand_path
