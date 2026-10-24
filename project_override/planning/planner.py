@@ -285,6 +285,10 @@ class EmpiricalWorldModel:
                 continue
             if rc in visited_centers and e.color not in self.hypotheses.pushable_colors:
                 continue
+            # Exclude border/perimeter HUD indicator strip (rows 0..3, 60..63 or cols 0..3, 60..63)
+            # from interactive playfield puzzle targets
+            if rc[0] < 4 or rc[0] > 59 or rc[1] < 4 or rc[1] > 59:
+                continue
             if 1 <= e.mass <= 36:
                 candidates.append(e)
         if not candidates:
@@ -303,6 +307,11 @@ class EmpiricalWorldModel:
             target_ents = [e for e in candidates if e not in push_ents]
             if push_ents and target_ents:
                 box = push_ents[0]
+                target_ents = sorted(
+                    target_ents,
+                    key=lambda g: abs(int(round(box.centroid[0])) - int(round(g.centroid[0])))
+                    + abs(int(round(box.centroid[1])) - int(round(g.centroid[1]))),
+                )
                 goal = target_ents[0]
                 br, bc = int(round(box.centroid[0])), int(round(box.centroid[1]))
                 gr, gc = int(round(goal.centroid[0])), int(round(goal.centroid[1]))
