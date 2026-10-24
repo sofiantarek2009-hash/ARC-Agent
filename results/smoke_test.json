@@ -3,7 +3,7 @@
   "games_completed_without_crash": 2,
   "mean_score": 12.84,
   "levels_cleared": 3,
-  "total_runtime_s": 0.211,
+  "total_runtime_s": 0.205,
   "mean_actions_per_game": 25.0,
   "llm_loaded": false,
   "llm_fallback_rate": 1.0,
@@ -13,7 +13,7 @@
       "score": 5.68,
       "levels_cleared": 1,
       "actions": 25,
-      "runtime_s": 0.1082,
+      "runtime_s": 0.1051,
       "crashed": false,
       "failure_reason": ""
     },
@@ -22,7 +22,7 @@
       "score": 20.0,
       "levels_cleared": 2,
       "actions": 25,
-      "runtime_s": 0.1013,
+      "runtime_s": 0.099,
       "crashed": false,
       "failure_reason": ""
     }

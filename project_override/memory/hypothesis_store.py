@@ -151,6 +151,9 @@ class HypothesisStore:
                 non_push = [item for item in tracked if item[0].color not in self.pushable_colors]
                 av_item = non_push[0] if non_push else tracked[0]
 
+            if av_item is not None and av_item[0].color not in self.pushable_colors:
+                self.avatar_colors.add(av_item[0].color)
+
             for item in tracked:
                 if item is not av_item:
                     pe_push, ce_push, (dr_p, dc_p) = item
