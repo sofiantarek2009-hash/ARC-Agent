@@ -13,7 +13,7 @@
       "score": 5.68,
       "levels_cleared": 1,
       "actions": 25,
-      "runtime_s": 0.1077,
+      "runtime_s": 0.1082,
       "crashed": false,
       "failure_reason": ""
     },
@@ -22,7 +22,7 @@
       "score": 20.0,
       "levels_cleared": 2,
       "actions": 25,
-      "runtime_s": 0.1006,
+      "runtime_s": 0.1013,
       "crashed": false,
       "failure_reason": ""
     }

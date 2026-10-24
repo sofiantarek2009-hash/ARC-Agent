@@ -2,17 +2,21 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional
 
-# Auto-resolve ARC-AGI-3-Agents framework path if available
-for candidate in (
-    Path(__file__).resolve().parent.parent / "ARC-AGI-3-Agents",
-    Path(__file__).resolve().parent.parent / "vendor" / "ARC-AGI-3-Agents",
-    Path("/tmp/ARC-AGI-3-Agents"),
+# Auto-resolve project_override and framework paths across local, starter, and Kaggle environments
+_HERE = Path(__file__).resolve()
+for candidate_dir in (
+    Path.cwd(),
+    Path("/kaggle/working"),
     Path("/kaggle/working/ARC-AGI-3-Agents"),
     Path("/kaggle/input/competitions/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents"),
     Path("/kaggle/input/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents"),
+    _HERE.parent,
+    _HERE.parent.parent,
+    _HERE.parents[2] if len(_HERE.parents) > 2 else _HERE.parent,
+    _HERE.parents[3] if len(_HERE.parents) > 3 else _HERE.parent,
 ):
-    if candidate.exists() and str(candidate) not in sys.path:
-        sys.path.insert(0, str(candidate))
+    if candidate_dir.exists() and str(candidate_dir) not in sys.path:
+        sys.path.insert(0, str(candidate_dir))
 
 from project_override.orchestration.general_agent import GeneralAgent
 

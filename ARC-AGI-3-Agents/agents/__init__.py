@@ -8,6 +8,11 @@ from .swarm import Swarm
 from .templates.random_agent import Random
 
 try:
+    from .templates.my_agent import MyAgent
+except Exception:
+    pass
+
+try:
     from .templates.langgraph_functional_agent import LangGraphFunc, LangGraphTextOnly
     from .templates.langgraph_random_agent import LangGraphRandom
     from .templates.langgraph_thinking import LangGraphThinking

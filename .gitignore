@@ -78,3 +78,4 @@ submission.parquet
 .kaggle/
 
 .backup_legacy/
+environment_files/
