@@ -1,0 +1,102 @@
+{
+  "games_attempted": 10,
+  "games_completed_without_crash": 10,
+  "mean_score": 54.67,
+  "levels_cleared": 34,
+  "total_runtime_s": 5.504,
+  "mean_actions_per_game": 85.0,
+  "llm_loaded": false,
+  "llm_fallback_rate": 1.0,
+  "per_game": [
+    {
+      "game_id": "sim_env_15",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.5496,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_16",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.5848,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_17",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.1666,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_18",
+      "score": 6.67,
+      "levels_cleared": 1,
+      "actions": 85,
+      "runtime_s": 1.0213,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_19",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.4131,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_20",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.5315,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_21",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.5641,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_22",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.1815,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_23",
+      "score": 6.67,
+      "levels_cleared": 1,
+      "actions": 85,
+      "runtime_s": 1.058,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_24",
+      "score": 66.67,
+      "levels_cleared": 4,
+      "actions": 85,
+      "runtime_s": 0.432,
+      "crashed": false,
+      "failure_reason": ""
+    }
+  ]
+}

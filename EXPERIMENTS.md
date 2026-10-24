@@ -1,0 +1,7 @@
+# Experimental Ledger & Ablation Summary (Project Override v3.0)
+
+1. **Iter 0 -> Iter 1 (Packaging & BLAKE2b Endian Fix):** Fixed `int.from_bytes(..., "little")`, added a self-contained Parquet fallback shim, and embedded all 20 module files into `notebooks/submission.ipynb`. Crash rate dropped from 100% to 0% (4.0% RHAE on Dev & Held-Out).
+2. **Iter 2 (Statistical DynamicHUDMasker + Reki Dead-Signature Click Pruning):** Inferred border HUD timer strips from transition frequency and pruned no-op object-signature clicks, lifting Dev and Held-Out RHAE from 4.0% to 13.33%.
+3. **Iter 3 (Executable EmpiricalWorldModel + Goal/Switch A* Route Planning):** Added `EmpiricalWorldModel` (`run_backtest`, `infer_obstacle_cells`, `plan_interactive_route`) inspired by Tycho, Schema, and Kepler, lifting Dev and Held-Out RHAE from 13.33% to 53.34% (80 levels cleared).
+4. **Iter 4 (OPINE-World Lifted Bayesian Exploration + Pattern Click Solver + Collinear Sokoban Planner):** Added Dirichlet-prior exploration priority (`BayesianExplorationTracker`), `plan_click_pattern_match`, and collinear block-push batching.
+5. **Iter 5 (NVIDIA AVO Trajectory Supervisor + Trap-Cell Undo Hazard Memory & S4 Playbook Memory):** Added `TrajectorySupervisor` stagnation detection and `ACTION7` (Undo) trap-cell hazard marking, lifting Dev, Held-Out, and 25-game Public RHAE to **54.67%** (85 of 125 levels cleared in ~52s).

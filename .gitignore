@@ -77,3 +77,4 @@ submission.parquet
 # Kaggle credentials
 .kaggle/
 
+.backup_legacy/

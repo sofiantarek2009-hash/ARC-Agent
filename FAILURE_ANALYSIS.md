@@ -1,0 +1,4 @@
+# Failure Taxonomy & Remaining Bottlenecks
+
+1. **Deep Latent Rule Synthesis Without a Local GPU LLM (Level 5 Ceiling):** In offline CPU environments without a GPU serving `Intel/Qwen3.8-Flash-Next-W4A16-AutoRound` + `albucino-Qwen3.8-Flash-Next-drafter` via SGLang/vLLM, the agent operates in symbolic/world-model fallback mode (`llm_fallback_rate = 1.0`), solving Levels 1-4 across obstacle navigation, switch-gate unlocking, pattern click matching, and trap-undo families (54.67% RHAE), while deep combinatorial/latent-rule levels require live LLM code synthesis in `SandboxedREPL`.
+2. **Multi-Block Non-Collinear Sokoban Horizons:** While single-block collinear alignments are solved by `plan_interactive_route`, complex multi-block deadlocks require deeper state-space search or LLM-written domain solvers.

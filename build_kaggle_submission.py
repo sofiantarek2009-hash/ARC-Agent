@@ -1,155 +1,159 @@
+#!/usr/bin/env python3
+"""
+Builds self-contained Kaggle submission artifacts for ARC-AGI-3:
+- notebooks/submission.ipynb
+- ARC-AGI-3-Kaggle-Starter/notebooks/submission.ipynb
+- dist/kaggle_single_cell_submission.py
+- Synchronizes kernel-metadata.json across notebook directories
+"""
 import json
-import shutil
-import subprocess
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parent
-NOTEBOOKS_DIR = ROOT / "ARC-AGI-3-Kaggle-Starter" / "notebooks"
-DIST_PATH = ROOT / "dist" / "kaggle_single_cell_submission.py"
 
-def main() -> None:
-    print("[BUILD] Generating self-contained Kaggle submission artifacts for V18...")
-    
-    # Pack project_override modules into a compressed payload
-    po_dir = ROOT / "project_override"
-    import io, base64, gzip
-    buf = io.BytesIO()
-    with gzip.open(buf, "wb", compresslevel=9) as f:
-        for p in sorted(po_dir.rglob("*.py")):
-            if "__pycache__" in str(p):
-                continue
-            rel = p.relative_to(ROOT)
-            data = p.read_bytes()
-            f.write(len(str(rel)).to_bytes(2, "little"))
-            f.write(str(rel).encode("utf-8"))
-            f.write(len(data).to_bytes(4, "little"))
-            f.write(data)
-    payload_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    print(f"[PACK] Packed override modules: {len(payload_b64):,} chars base64")
-
-    cell1_wheels = r'''# --- CELL 1: INSTALL COMPETITION WHEELS & DEPENDENCIES ---
-import os, sys, subprocess, glob
-
-print("=== Initializing ARC-AGI-3 Environment ===")
-comp_dirs = [
-    "/kaggle/input/competitions/arc-prize-2026-arc-agi-3",
-    "/kaggle/input/arc-prize-2026-arc-agi-3",
-    "/kaggle/input/arc-agi-3"
+MODULE_FILES = [
+    "project_override/__init__.py",
+    "project_override/config.py",
+    "project_override/perception/__init__.py",
+    "project_override/perception/observation_processor.py",
+    "project_override/memory/__init__.py",
+    "project_override/memory/action_ledger.py",
+    "project_override/memory/hypothesis_store.py",
+    "project_override/planning/__init__.py",
+    "project_override/planning/explorer.py",
+    "project_override/planning/planner.py",
+    "project_override/llm/__init__.py",
+    "project_override/llm/local_runtime.py",
+    "project_override/llm/repl.py",
+    "project_override/execution/__init__.py",
+    "project_override/execution/safe_executor.py",
+    "project_override/orchestration/__init__.py",
+    "project_override/orchestration/general_agent.py",
+    "project_override/submission/__init__.py",
+    "project_override/submission/kaggle_submission.py",
+    "agent/my_agent.py",
 ]
-comp_dir = next((p for p in comp_dirs if os.path.isdir(p)), None)
-if comp_dir:
-    wheels_path = os.path.join(comp_dir, "arc_agi_3_wheels")
-    if os.path.isdir(wheels_path):
-        for pkg in ["arcengine", "arc-agi"]:
-            subprocess.run([sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", f"--find-links={wheels_path}", pkg], check=False)
 
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "pandas", "numpy", "transformers", "accelerate"], check=False)
-print("Environment dependencies verified.")
-'''
+def build_all() -> None:
+    print("[BUILD] Packaging self-contained ARC-AGI-3 agent modules...")
+    bundle_dict = {}
+    for rel_path in MODULE_FILES:
+        fp = ROOT / rel_path
+        if not fp.exists():
+            raise FileNotFoundError(f"Required module file missing: {fp}")
+        bundle_dict[rel_path] = fp.read_text(encoding="utf-8")
+    print(f"[PACK] Bundled {len(bundle_dict)} module files ({sum(len(v) for v in bundle_dict.values()):,} chars).")
 
-    cell2_extract = f'''# --- CELL 2: UNPACK PROJECT OVERRIDE MODULES ---
-import os, base64, gzip, io
-from pathlib import Path
+    cell_1_unpack = (
+        "# --- CELL 1: UNPACK SELF-CONTAINED PROJECT OVERRIDE V3.0 MODULES ---\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n\n"
+        f"EMBEDDED_FILES = {json.dumps(bundle_dict, indent=2)}\n\n"
+        "for rel_path, content in EMBEDDED_FILES.items():\n"
+        "    p = Path(rel_path)\n"
+        "    p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    p.write_text(content, encoding='utf-8')\n\n"
+        "for extra_dir in ['.', 'agent', 'project_override']:\n"
+        "    if extra_dir not in sys.path:\n"
+        "        sys.path.insert(0, extra_dir)\n\n"
+        "print(f'[OK] Unpacked {len(EMBEDDED_FILES)} module files into environment.')\n"
+    )
 
-payload_b64 = "{payload_b64}"
-buf = io.BytesIO(base64.b64decode(payload_b64))
-with gzip.open(buf, "rb") as f:
-    raw = f.read()
+    cell_2_execute = (
+        "# --- CELL 2: EXECUTE ARC-AGI-3 SUBMISSION PIPELINE ---\n"
+        "import os, sys\n"
+        "from pathlib import Path\n\n"
+        "from project_override.submission.kaggle_submission import (\n"
+        "    run_submission_pipeline,\n"
+        "    validate_submission_parquet,\n"
+        ")\n\n"
+        "print('=== Executing ARC-AGI-3 Submission Pipeline ===')\n"
+        "summary = run_submission_pipeline(parquet_path='submission.parquet')\n"
+        "assert validate_submission_parquet('submission.parquet'), 'Invalid submission.parquet schema!'\n\n"
+        "if Path('/kaggle/working').exists() and Path('submission.parquet').exists():\n"
+        "    import shutil\n"
+        "    shutil.copyfile('submission.parquet', '/kaggle/working/submission.parquet')\n"
+        "    print('[OK] Copied submission.parquet to /kaggle/working/submission.parquet')\n\n"
+        "print('Submission pipeline finished successfully:', summary)\n"
+    )
 
-pos = 0
-while pos < len(raw):
-    rel_len = int.from_bytes(raw[pos:pos+2], "byteorder")
-    pos += 2
-    rel_path = raw[pos:pos+rel_len].decode("utf-8")
-    pos += rel_len
-    data_len = int.from_bytes(raw[pos:pos+4], "byteorder")
-    pos += 4
-    data = raw[pos:pos+data_len]
-    pos += data_len
-    
-    target = Path(rel_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-
-print("[OK] Unpacked all project_override modules successfully.")
-'''
-
-    my_agent_src = (ROOT / "ARC-AGI-3-Kaggle-Starter" / "agent" / "my_agent.py").read_text(encoding="utf-8")
-    cell3_agent = f'''# --- CELL 3: MY_AGENT IMPLEMENTATION ---
-{my_agent_src}
-'''
-
-    cell4_runner = r'''# --- CELL 4: COMPETITION RUNNER & DUAL-PHASE PARQUET HANDLER ---
-import os
-import subprocess
-import pandas as pd
-
-is_rerun = os.getenv("KAGGLE_IS_COMPETITION_RERUN") == "1" or os.getenv("KAGGL_IS_COMPETITION_RERUN") == "1"
-
-if is_rerun:
-    print("[RERUN] Competition evaluation mode active. Waiting for gateway...")
-    subprocess.run(["curl", "--fail", "--retry", "999", "--retry-all-errors", "--retry-delay", "2", "--retry-max-time", "600", "http://gateway:8001/api/games"], check=False)
-else:
-    print("[PHASE-A] Save & Run All mode active. Generating mandatory sample submission.parquet for validation...")
-    try:
-        # Standard ARC-AGI-3 sample submission format for Phase A validation pass
-        df_sub = pd.DataFrame(
-            data=[["1_0", "1", True, 1.0]],
-            columns=["row_id", "game_id", "end_of_game", "score"]
-        )
-        df_sub.to_parquet("/kaggle/working/submission.parquet", index=False)
-        print("[PARQUET] Successfully wrote sample /kaggle/working/submission.parquet")
-    except Exception as e:
-        print(f"[PARQUET-FALLBACK] Error: {e}")
-        pd.DataFrame({"status": ["ok"]}).to_parquet("/kaggle/working/submission.parquet", index=False)
-        print("[PARQUET] Wrote minimal fallback submission.parquet")
-
-print("ARC-AGI-3 Environment Setup & Parquet Handlers Initialized.")
-'''
-
-    NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
-    nb_path = NOTEBOOKS_DIR / "submission.ipynb"
-    
-    cells = [
-        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": cell1_wheels.splitlines(keepends=True)},
-        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": cell2_extract.splitlines(keepends=True)},
-        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": cell3_agent.splitlines(keepends=True)},
-        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": cell4_runner.splitlines(keepends=True)},
-    ]
-    
-    nb_dict = {
-        "cells": cells,
+    nb = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [line + "\n" for line in cell_1_unpack.splitlines()],
+            },
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [line + "\n" for line in cell_2_execute.splitlines()],
+            },
+        ],
         "metadata": {
-            "language_info": {"name": "python"},
-            "orig_nbformat": 4
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {"name": "python", "version": "3.12.0"},
         },
         "nbformat": 4,
-        "nbformat_minor": 2
+        "nbformat_minor": 5,
     }
-    nb_path.write_text(json.dumps(nb_dict, indent=2), encoding="utf-8")
-    print(f"[NOTEBOOK] Successfully built {nb_path}")
 
-    meta_path = NOTEBOOKS_DIR / "kernel-metadata.json"
+    # Write root notebooks/submission.ipynb
+    nb_dir1 = ROOT / "notebooks"
+    nb_dir1.mkdir(parents=True, exist_ok=True)
+    nb_path1 = nb_dir1 / "submission.ipynb"
+    nb_path1.write_text(json.dumps(nb, indent=2), encoding="utf-8")
+    print(f"[NOTEBOOK] Generated {nb_path1}")
+
+    # Write ARC-AGI-3-Kaggle-Starter/notebooks/submission.ipynb
+    nb_dir2 = ROOT / "ARC-AGI-3-Kaggle-Starter" / "notebooks"
+    nb_dir2.mkdir(parents=True, exist_ok=True)
+    nb_path2 = nb_dir2 / "submission.ipynb"
+    nb_path2.write_text(json.dumps(nb, indent=2), encoding="utf-8")
+    print(f"[NOTEBOOK] Generated {nb_path2}")
+
+    # Write dist/kaggle_single_cell_submission.py
+    dist_dir = ROOT / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    dist_file = dist_dir / "kaggle_single_cell_submission.py"
+    single_cell_code = f"{cell_1_unpack}\n\n{cell_2_execute}\n"
+    dist_file.write_text(single_cell_code, encoding="utf-8")
+    print(f"[STANDALONE] Generated {dist_file}")
+
+    # Synchronize kernel-metadata.json
     meta = {
         "id": "sofianali188201/arc-prize-2026-arc-agi-3-starter",
-        "title": "ARC Prize 2026 - ARC-AGI-3 Starter V18",
+        "title": "ARC Prize 2026 - ARC-AGI-3 Starter V3.0",
         "code_file": "submission.ipynb",
         "language": "python",
         "kernel_type": "notebook",
         "is_private": "true",
         "enable_gpu": "true",
+        "enable_tpu": "false",
         "enable_internet": "false",
-        "keyword_ids": [],
         "dataset_sources": [],
         "competition_sources": ["arc-prize-2026-arc-agi-3"],
-        "model_sources": ["qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1"]
+        "kernel_sources": [],
+        "model_sources": [
+            "intel-qwen3-8-flash-next-w4a16-autoround",
+            "qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1",
+        ],
     }
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    for m_dir in (nb_dir1, nb_dir2):
+        m_path = m_dir / "kernel-metadata.json"
+        m_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        print(f"[METADATA] Generated {m_path}")
 
-    DIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    single_cell = "\n\n".join([cell1_wheels, cell2_extract, cell3_agent, cell4_runner])
-    DIST_PATH.write_text(single_cell, encoding="utf-8")
-    print(f"[STANDALONE] Built {DIST_PATH} ({DIST_PATH.stat().st_size:,} bytes)")
+    print("[SUCCESS] All Kaggle submission artifacts built cleanly.")
 
 if __name__ == "__main__":
-    main()
+    build_all()

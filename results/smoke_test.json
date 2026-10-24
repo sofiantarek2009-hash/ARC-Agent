@@ -1,0 +1,30 @@
+{
+  "games_attempted": 2,
+  "games_completed_without_crash": 2,
+  "mean_score": 12.84,
+  "levels_cleared": 3,
+  "total_runtime_s": 0.211,
+  "mean_actions_per_game": 25.0,
+  "llm_loaded": false,
+  "llm_fallback_rate": 1.0,
+  "per_game": [
+    {
+      "game_id": "sim_env_00",
+      "score": 5.68,
+      "levels_cleared": 1,
+      "actions": 25,
+      "runtime_s": 0.1077,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sim_env_01",
+      "score": 20.0,
+      "levels_cleared": 2,
+      "actions": 25,
+      "runtime_s": 0.1006,
+      "crashed": false,
+      "failure_reason": ""
+    }
+  ]
+}

@@ -1,495 +1,189 @@
-"""ARC-AGI-3 Official Starter Kit Compatible Agent: MyAgent
-Drop-in replacement for `agent/my_agent.py` in ARC-AGI-3-Kaggle-Starter.
-
-Connects the competition runtime to Project Override:
-- Zero-NN Perception with 4-cell border timer mask
-- Dead-Signature Bitwise Culling (O(1) null transition avoidance)
-- Discrete Kinematic Physics & Sokoban Intercept Geometry
-- Epistemic-Damped UCT Macro Planning
-- Solved-Level Memory (Siriki M85)
-- Dynamic System Pacing watchdog for 9-hour Kaggle offline budget
-- Defensive Exception & Coordinate Gating: Guarantees 0-crash thread execution
-"""
-
-from __future__ import annotations
-
-import logging
-import os
+from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Union
-import numpy as np
+from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+# Auto-resolve ARC-AGI-3-Agents framework path if available
+for candidate in (
+    Path(__file__).resolve().parent.parent / "ARC-AGI-3-Agents",
+    Path(__file__).resolve().parent.parent / "vendor" / "ARC-AGI-3-Agents",
+    Path("/tmp/ARC-AGI-3-Agents"),
+    Path("/kaggle/working/ARC-AGI-3-Agents"),
+    Path("/kaggle/input/competitions/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents"),
+    Path("/kaggle/input/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents"),
+):
+    if candidate.exists() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
-# Add project_override directory to path if needed
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = CURRENT_DIR
-PROJECT_DIR = os.path.join(CURRENT_DIR, "project_override")
-for p in [CURRENT_DIR, PARENT_DIR, PROJECT_DIR, "/kaggle/working", "/kaggle/working/ARC-AGI-3-Agents", "/tmp"]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-# ---------------------------------------------------------------------------
-# Framework Imports & Comprehensive Fallback Definitions
-# ---------------------------------------------------------------------------
-try:
-    from arcengine import GameAction, GameState, FrameData
-except ImportError:
-    # Full standalone ARC-AGI-3 Engine Enums & Structures Fallback
-    class ActionData:
-        def __init__(self, x: int = 0, y: int = 0, game_id: str = "") -> None:
-            self.x = int(x)
-            self.y = int(y)
-            self.game_id = str(game_id)
-
-        def model_dump(self) -> Dict[str, Any]:
-            return {"game_id": self.game_id, "x": self.x, "y": self.y}
-
-    class GameAction:
-        def __init__(self, action_id: int, name: str, is_complex: bool = False) -> None:
-            self.value = action_id
-            self.id = action_id
-            self.name = name
-            self._is_complex = is_complex
-            self.action_data = ActionData()
-            self.reasoning: Optional[Dict[str, Any]] = None
-            self.data: Optional[Dict[str, Any]] = None
-
-        def is_simple(self) -> bool:
-            return not self._is_complex
-
-        def is_complex(self) -> bool:
-            return self._is_complex
-
-        def set_data(self, data: Dict[str, Any]) -> Any:
-            cx = max(0, min(63, int(data.get("x", 0)))) if data else 0
-            cy = max(0, min(63, int(data.get("y", 0)))) if data else 0
-            self.action_data = ActionData(x=cx, y=cy, game_id=data.get("game_id", ""))
-            self.data = dict(data) if data else {}
-            return self.action_data
-
-        def __repr__(self) -> str:
-            return f"GameAction.{self.name}"
-
-        def __eq__(self, other: Any) -> bool:
-            if isinstance(other, GameAction):
-                return self.value == other.value
-            return self.value == other
-
-    GameAction.RESET = GameAction(0, "RESET", is_complex=False)
-    GameAction.ACTION1 = GameAction(1, "ACTION1", is_complex=False)
-    GameAction.ACTION2 = GameAction(2, "ACTION2", is_complex=False)
-    GameAction.ACTION3 = GameAction(3, "ACTION3", is_complex=False)
-    GameAction.ACTION4 = GameAction(4, "ACTION4", is_complex=False)
-    GameAction.ACTION5 = GameAction(5, "ACTION5", is_complex=False)
-    GameAction.ACTION6 = GameAction(6, "ACTION6", is_complex=True)
-    GameAction.ACTION7 = GameAction(7, "ACTION7", is_complex=False)
-
-    _ALL_ACTIONS = [
-        GameAction.RESET,
-        GameAction.ACTION1,
-        GameAction.ACTION2,
-        GameAction.ACTION3,
-        GameAction.ACTION4,
-        GameAction.ACTION5,
-        GameAction.ACTION6,
-        GameAction.ACTION7,
-    ]
-
-    @classmethod
-    def _from_id(cls, action_id: int) -> GameAction:
-        for a in _ALL_ACTIONS:
-            if a.value == action_id:
-                return a
-        return GameAction.ACTION1
-
-    GameAction.from_id = _from_id  # type: ignore[assignment]
-
-    class GameState:
-        NOT_PLAYED = "NOT_PLAYED"
-        NOT_FINISHED = "NOT_FINISHED"
-        WIN = "WIN"
-        GAME_OVER = "GAME_OVER"
-
-    class FrameData:
-        def __init__(
-            self,
-            frame: Any = None,
-            state: str = GameState.NOT_FINISHED,
-            levels_completed: int = 0,
-            win_levels: int = 1,
-            available_actions: Optional[List[int]] = None,
-            game_id: str = "default_game",
-        ) -> None:
-            self.frame = frame if frame is not None else [np.zeros((64, 64), dtype=int).tolist()]
-            self.state = state
-            self.levels_completed = levels_completed
-            self.win_levels = win_levels
-            self.available_actions = available_actions or [1, 2, 3, 4, 5, 6, 7]
-            self.game_id = game_id
+from project_override.orchestration.general_agent import GeneralAgent
 
 try:
     from agents.agent import Agent
+    from arcengine import FrameData, GameAction, GameState
+    HAS_OFFICIAL_FRAMEWORK = True
 except ImportError:
-    class Agent:
-        """Abstract base class matching ARC-AGI-3 Agents framework."""
-        MAX_ACTIONS: int = 200
+    HAS_OFFICIAL_FRAMEWORK = False
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            self.game_id = kwargs.get("game_id", "default_game")
-            self.card_id = kwargs.get("card_id", "test_card")
-            self.agent_name = kwargs.get("agent_name", "myagent")
-            self.ROOT_URL = kwargs.get("ROOT_URL", "http://localhost:8001")
-            self.arc_env = kwargs.get("arc_env", None)
-            self.tags = kwargs.get("tags", [])
+    class GameState:  # type: ignore
+        NOT_PLAYED = "NOT_PLAYED"
+        PLAYING = "PLAYING"
+        WIN = "WIN"
+        GAME_OVER = "GAME_OVER"
+        NOT_FINISHED = "NOT_FINISHED"
+
+    class GameAction:  # type: ignore
+        RESET = 0
+        ACTION1 = 1
+        ACTION2 = 2
+        ACTION3 = 3
+        ACTION4 = 4
+        ACTION5 = 5
+        ACTION6 = 6
+        ACTION7 = 7
+
+    class Agent:  # type: ignore
+        MAX_ACTIONS: int = 450
+
+        def __init__(
+            self,
+            card_id: str = "local",
+            game_id: str = "local",
+            agent_name: str = "MyAgent",
+            ROOT_URL: str = "http://localhost",
+            record: bool = False,
+            arc_env: Any = None,
+            tags: Optional[List[str]] = None,
+            *args: Any,
+            **kwargs: Any,
+        ) -> None:
+            self.card_id = card_id
+            self.game_id = game_id
+            self.agent_name = agent_name
+            self.ROOT_URL = ROOT_URL
+            self.record = record
+            self.arc_env = arc_env
+            self.tags = tags or []
             self.action_counter = 0
-            self.frames = [FrameData(levels_completed=0, state=getattr(GameState, "NOT_PLAYED", "NOT_PLAYED"))]
+            self.frames: List[Any] = []
+            self.timer = 0.0
 
-        @property
-        def state(self) -> Any:
-            return self.frames[-1].state if self.frames else getattr(GameState, "NOT_PLAYED", "NOT_PLAYED")
-
-        @property
-        def levels_completed(self) -> int:
-            return getattr(self.frames[-1], "levels_completed", 0) if self.frames else 0
-
-        def append_frame(self, frame: FrameData) -> None:
-            self.frames.append(frame)
-
-        def do_action_request(self, action: GameAction) -> Any:
+        def main(self) -> None:
             if self.arc_env is None:
-                return None
-            data = action.action_data.model_dump() if hasattr(action, "action_data") else {}
-            reasoning = getattr(action, "reasoning", None)
-            raw = self.arc_env.step(action, data=data, reasoning=reasoning)
-            if raw is None:
-                return None
-            if hasattr(raw, "frame"):
-                frame_list = [arr.tolist() if hasattr(arr, "tolist") else arr for arr in raw.frame]
-                return FrameData(
-                    game_id=raw.game_id,
-                    frame=frame_list,
-                    state=raw.state,
-                    levels_completed=raw.levels_completed,
-                    win_levels=raw.win_levels,
-                    available_actions=raw.available_actions,
-                )
-            return raw
-
-        def take_action(self, action: GameAction) -> Optional[FrameData]:
-            return self.do_action_request(action)
+                return
+            obs = getattr(self.arc_env, "observation_space", None)
+            if obs is not None:
+                self.frames.append(obs)
+            while (
+                self.frames
+                and not self.is_done(self.frames, self.frames[-1])
+                and self.action_counter < self.MAX_ACTIONS
+            ):
+                action = self.choose_action(self.frames, self.frames[-1])
+                next_obs = self.arc_env.step(action)
+                if next_obs is not None:
+                    self.frames.append(next_obs)
+                self.action_counter += 1
 
         def cleanup(self, scorecard: Any = None) -> None:
             pass
 
-        def main(self) -> None:
-            while not self.is_done(self.frames, self.frames[-1]) and self.action_counter <= self.MAX_ACTIONS:
-                obs = self.frames[-1]
-                if self.arc_env and hasattr(self.arc_env, "observation_space") and self.arc_env.observation_space:
-                    raw_obs = self.arc_env.observation_space
-                    obs = FrameData(
-                        game_id=getattr(raw_obs, "game_id", self.game_id),
-                        frame=[arr.tolist() if hasattr(arr, "tolist") else arr for arr in getattr(raw_obs, "frame", [])],
-                        state=getattr(raw_obs, "state", GameState.NOT_PLAYED),
-                        levels_completed=getattr(raw_obs, "levels_completed", 0),
-                        win_levels=getattr(raw_obs, "win_levels", 1),
-                        available_actions=getattr(raw_obs, "available_actions", [1, 2, 3, 4, 5, 6, 7]),
-                    )
-                action = self.choose_action(self.frames, obs)
-                frame = self.take_action(action)
-                if frame:
-                    self.append_frame(frame)
-                self.action_counter += 1
-            self.cleanup()
+        @property
+        def state(self) -> Any:
+            if not self.frames:
+                return GameState.NOT_PLAYED
+            return getattr(self.frames[-1], "state", GameState.NOT_PLAYED)
 
-        def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
+        @property
+        def levels_completed(self) -> int:
+            if not self.frames:
+                return 0
+            return int(getattr(self.frames[-1], "levels_completed", 0) or 0)
+
+        def is_done(self, frames: List[Any], latest_frame: Any) -> bool:
             raise NotImplementedError
 
-        def choose_action(self, frames: List[FrameData], latest_frame: FrameData) -> GameAction:
+        def choose_action(self, frames: List[Any], latest_frame: Any) -> Any:
             raise NotImplementedError
 
-# Import the core GeneralAgent (Zero-Overfitting Universal Engine)
-from project_override.orchestration.general_agent import GeneralAgent as ProjectOverrideAgent
 
-
-# ---------------------------------------------------------------------------
-# Official Starter Kit Agent Implementation
-# ---------------------------------------------------------------------------
 class MyAgent(Agent):
-    """Project Override Competition Agent for ARC-AGI-3.
-    Subclasses official `Agent` to integrate into ARC-AGI-3-Kaggle-Starter.
-    """
-
-    MAX_ACTIONS: int = 200
+    """Official ARC-AGI-3-Agents / Kaggle-Starter ABI wrapper around GeneralAgent."""
+    MAX_ACTIONS = 450
 
     def __init__(
         self,
+        card_id: str = "local",
+        game_id: str = "local",
+        agent_name: str = "MyAgent",
+        ROOT_URL: str = "http://localhost",
+        record: bool = False,
+        arc_env: Any = None,
+        tags: Optional[List[str]] = None,
         *args: Any,
-        total_budget: float = 32400.0,
-        total_games: int = 135,
-        max_level_timeout: float = 35.0,
         **kwargs: Any,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self.orchestration_agent = ProjectOverrideAgent(
-            total_budget=total_budget,
-            total_games=total_games,
-            max_level_timeout=max_level_timeout,
+        super().__init__(
+            card_id,
+            game_id,
+            agent_name,
+            ROOT_URL,
+            record,
+            arc_env,
+            tags,
+            *args,
+            **kwargs,
         )
-        self.current_game_id: Optional[str] = getattr(self, "game_id", None)
-        self.last_level_index: int = 0
-        self.actions_in_current_level: int = 0
-        self.level_actions_history: List[int] = []
-        if self.current_game_id:
-            try:
-                self.orchestration_agent.start_new_game(self.current_game_id)
-            except Exception as e:
-                logger.warning(f"Error starting new game {self.current_game_id}: {e}")
+        self._brain = GeneralAgent()
+        # Expose alias for compatibility with code expecting orchestration_agent
+        self.orchestration_agent = self._brain
 
-    def is_done(self, frames: List[FrameData], latest_frame: FrameData) -> bool:
-        """Determines when the agent has completed the current game."""
-        try:
-            if latest_frame is None:
-                return True
-
-            state = getattr(latest_frame, "state", None)
-            state_str = str(getattr(state, "name", state)).upper()
-
-            # Check if environment reached WIN state
-            if state is getattr(GameState, "WIN", None) or "WIN" in state_str:
-                return True
-
-            # Check if levels completed reached target win levels (when target > 0)
-            completed = getattr(latest_frame, "levels_completed", 0)
-            target = getattr(latest_frame, "win_levels", 1)
-            if target is not None and isinstance(target, (int, float)) and target > 0 and completed >= target:
-                return True
-
-            return False
-        except Exception as e:
-            logger.warning(f"Error in is_done check: {e}")
-            return False
-
-    def _safe_coord(self, val: Any, default: int = 0) -> int:
-        """Safely parses and clamps coordinate to [0, 63]."""
-        try:
-            if val is None:
-                return default
-            return max(0, min(63, int(val)))
-        except (ValueError, TypeError):
-            return default
-
-    def _make_game_action(
-        self,
-        action_id: int,
-        action_data: Optional[Dict[str, Any]] = None,
-    ) -> GameAction:
-        """Constructs an authentic GameAction instance guaranteed to pass engine validation."""
-        action_data = action_data or {}
-        selected_action: Optional[GameAction] = None
-
-        if hasattr(GameAction, "from_id"):
-            try:
-                selected_action = GameAction.from_id(action_id)
-            except Exception:
-                selected_action = getattr(GameAction, "ACTION1", None)
-        else:
-            action_map = {
-                0: getattr(GameAction, "RESET", None),
-                1: getattr(GameAction, "ACTION1", None),
-                2: getattr(GameAction, "ACTION2", None),
-                3: getattr(GameAction, "ACTION3", None),
-                4: getattr(GameAction, "ACTION4", None),
-                5: getattr(GameAction, "ACTION5", None),
-                6: getattr(GameAction, "ACTION6", None),
-                7: getattr(GameAction, "ACTION7", None),
-            }
-            selected_action = action_map.get(action_id, getattr(GameAction, "ACTION1", None))
-
-        if selected_action is None:
-            selected_action = getattr(GameAction, "ACTION1", None)
-
-        # Coordinate click action handling
-        if action_id == 6:
-            cx = self._safe_coord(action_data.get("x", 0))
-            cy = self._safe_coord(action_data.get("y", 0))
-            clean_data = {"x": cx, "y": cy}
-            try:
-                if hasattr(selected_action, "set_data"):
-                    selected_action.set_data(clean_data)
-                elif hasattr(selected_action, "action_data") and selected_action.action_data is not None:
-                    selected_action.action_data.x = cx
-                    selected_action.action_data.y = cy
-            except Exception as e:
-                logger.warning(f"Could not set action_data on ACTION6: {e}")
-            selected_action.data = clean_data
-        else:
-            try:
-                if hasattr(selected_action, "set_data"):
-                    selected_action.set_data({})
-            except Exception:
-                pass
-            selected_action.data = None
-
-        # Attach standard reasoning metadata
-        action_name = getattr(selected_action, "name", str(action_id))
-        selected_action.reasoning = {
-            "action": action_name,
-            "step": self.actions_in_current_level,
-        }
-
-        # Defensive fallback: guarantee .action_data exists and has model_dump()
-        if not hasattr(selected_action, "action_data") or selected_action.action_data is None:
-            class _FallbackData:
-                def __init__(self, data: Dict[str, Any]) -> None:
-                    self._d = data
-                def model_dump(self) -> Dict[str, Any]:
-                    return self._d
-            selected_action.action_data = _FallbackData(selected_action.data or {})
-
-        return selected_action
-
-    def choose_action(self, frames: List[FrameData], latest_frame: FrameData) -> GameAction:
-        """Inspects current frame state and returns the optimal GameAction.
-        Defensive outer wrapper guarantees the thread never crashes under any exception.
-        """
-        try:
-            return self._choose_action_impl(frames, latest_frame)
-        except Exception as e:
-            logger.error(f"Unhandled exception in MyAgent.choose_action for {self.current_game_id}: {e}", exc_info=True)
-            # Safe legal fallback
-            return self._make_game_action(1, {})
-
-    def _choose_action_impl(self, frames: List[FrameData], latest_frame: FrameData) -> GameAction:
+    def is_done(self, frames: List[Any], latest_frame: Any) -> bool:
         state = getattr(latest_frame, "state", None)
-        state_str = str(getattr(state, "name", state)).upper()
-
-        # 1. Handle Game Initialization / Restart
-        is_not_played = (
-            state is getattr(GameState, "NOT_PLAYED", None)
-            or state_str in ["NOT_PLAYED", "GAMESTATE.NOT_PLAYED"]
-        )
-        is_game_over = (
-            state is getattr(GameState, "GAME_OVER", None)
-            or state_str in ["GAME_OVER", "GAMESTATE.GAME_OVER"]
+        return (
+            state is getattr(GameState, "WIN", "WIN")
+            or str(getattr(state, "name", state)).upper() == "WIN"
         )
 
-        if is_not_played or is_game_over:
-            if is_game_over:
-                try:
-                    self.orchestration_agent.start_new_level(self.last_level_index)
-                except Exception as e:
-                    logger.warning(f"Error resetting level after GAME_OVER: {e}")
-                self.actions_in_current_level = 0
-                self.level_actions_history = []
-            return self._make_game_action(0, {})
+    def choose_action(self, frames: List[Any], latest_frame: Any) -> Any:
+        state = getattr(latest_frame, "state", None)
+        state_name = str(getattr(state, "name", state or "PLAYING")).upper()
+        if (
+            state in (getattr(GameState, "NOT_PLAYED", "NOT_PLAYED"), getattr(GameState, "GAME_OVER", "GAME_OVER"))
+            or state_name in ("NOT_PLAYED", "GAME_OVER")
+        ):
+            return GameAction.RESET
 
-        # 2. Track Game and Level Transitions
-        game_id = getattr(latest_frame, "game_id", None) or getattr(self, "game_id", "default_game")
-        if self.current_game_id != game_id and game_id:
-            self.current_game_id = game_id
-            try:
-                self.orchestration_agent.start_new_game(game_id)
-            except Exception as e:
-                logger.warning(f"Error starting new game {game_id}: {e}")
-            self.last_level_index = 0
-            self.level_actions_history = []
+        avail_raw = getattr(latest_frame, "available_actions", None) or [1, 2, 3, 4, 5, 6]
+        avail_ids: List[int] = []
+        for a in avail_raw:
+            if isinstance(a, int):
+                avail_ids.append(a)
+            elif hasattr(a, "value") and isinstance(a.value, int):
+                avail_ids.append(int(a.value))
+            elif hasattr(a, "name") and str(a.name).upper().startswith("ACTION"):
+                suffix = str(a.name).upper()[6:]
+                if suffix.isdigit():
+                    avail_ids.append(int(suffix))
 
-        current_level = getattr(latest_frame, "levels_completed", 0)
-        if current_level > self.last_level_index:
-            try:
-                self.orchestration_agent.record_level_won(self.level_actions_history)
-            except Exception:
-                pass
-            self.last_level_index = current_level
-            try:
-                self.orchestration_agent.start_new_level(current_level)
-            except Exception:
-                pass
-            self.actions_in_current_level = 0
-            self.level_actions_history = []
-        elif current_level < self.last_level_index:
-            self.last_level_index = current_level
-            try:
-                self.orchestration_agent.start_new_level(current_level)
-            except Exception:
-                pass
-            self.actions_in_current_level = 0
-            self.level_actions_history = []
+        levels_done = int(getattr(latest_frame, "levels_completed", 0) or 0)
+        act_id, payload = self._brain.act(
+            raw_obs=latest_frame,
+            available_actions=avail_ids or [1, 2, 3, 4, 5, 6],
+            levels_completed=levels_done,
+            state_str=state_name,
+        )
 
-        self.actions_in_current_level += 1
+        if act_id == 0:
+            return GameAction.RESET
 
-        # 3. Extract Grid Observation (settled 2D frame with 64x64 guarantee)
-        raw_frame = getattr(latest_frame, "frame", None)
-        grid: Optional[np.ndarray] = None
-        if raw_frame is not None:
-            try:
-                if isinstance(raw_frame, list) and len(raw_frame) > 0:
-                    last_sub = raw_frame[-1]
-                    grid = np.array(last_sub, dtype=np.int32)
-                elif isinstance(raw_frame, np.ndarray):
-                    grid = raw_frame[-1] if raw_frame.ndim == 3 else raw_frame
-                else:
-                    grid = np.array(raw_frame, dtype=np.int32)
-                    if grid.ndim == 3:
-                        grid = grid[-1]
-            except Exception:
-                grid = None
+        action_obj = getattr(GameAction, f"ACTION{act_id}", GameAction.ACTION1)
+        if hasattr(action_obj, "is_complex") and action_obj.is_complex():
+            action_obj.set_data({"x": int(payload.get("x", 32)), "y": int(payload.get("y", 32))})
+            action_obj.reasoning = {
+                "agent": "project_override_v3",
+                "x": payload.get("x", 32),
+                "y": payload.get("y", 32),
+            }
+        elif hasattr(action_obj, "is_simple") and action_obj.is_simple():
+            action_obj.reasoning = f"project_override_v3 selected ACTION{act_id}"
 
-        # Guarantee a valid 2D 64x64 numpy array
-        if grid is None or not isinstance(grid, np.ndarray) or grid.ndim != 2 or grid.shape != (64, 64):
-            if isinstance(grid, np.ndarray) and grid.ndim == 2:
-                padded = np.zeros((64, 64), dtype=np.int32)
-                h = min(64, grid.shape[0])
-                w = min(64, grid.shape[1])
-                padded[:h, :w] = grid[:h, :w]
-                grid = padded
-            else:
-                grid = np.zeros((64, 64), dtype=np.int32)
-
-        # 4. Extract Legal Actions
-        available = getattr(latest_frame, "available_actions", None)
-        legal_actions: List[int] = []
-        if available:
-            for a in available:
-                if isinstance(a, int):
-                    legal_actions.append(a)
-                elif hasattr(a, "id"):
-                    legal_actions.append(int(a.id))
-                elif hasattr(a, "value"):
-                    legal_actions.append(int(a.value))
-                else:
-                    try:
-                        legal_actions.append(int(a))
-                    except (ValueError, TypeError):
-                        pass
-
-        # Exclude RESET from normal play options unless specifically requested
-        legal_in_game = [a for a in legal_actions if a != 0]
-        if not legal_in_game:
-            legal_in_game = [1, 2, 3, 4, 5, 6, 7]
-
-        # 5. Core Policy Query with Defensive Isolation
-        try:
-            action_id, action_data = self.orchestration_agent.choose_action(
-                current_grid=grid,
-                available_actions=legal_in_game,
-                game_state=str(state),
-                raw_frame=raw_frame,
-            )
-        except Exception as e:
-            logger.warning(f"Exception inside orchestration_agent.choose_action: {e}", exc_info=True)
-            # Cycle through legal actions to prevent permanent static lock
-            fb_idx = self.actions_in_current_level % len(legal_in_game) if legal_in_game else 0
-            action_id = legal_in_game[fb_idx] if legal_in_game else 1
-            action_data = {}
-
-        # 6. Ensure action_id is legal
-        if action_id not in legal_in_game and legal_in_game:
-            fb_idx = self.actions_in_current_level % len(legal_in_game)
-            action_id = legal_in_game[fb_idx]
-
-        # 7. Construct and return verified GameAction
-        selected_action = self._make_game_action(action_id, action_data)
-        self.level_actions_history.append(action_id)
-        return selected_action
+        return action_obj
