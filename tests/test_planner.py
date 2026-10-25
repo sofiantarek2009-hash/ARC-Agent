@@ -4,13 +4,27 @@ from project_override.llm.local_runtime import parse_llm_response
 from project_override.llm.repl import SandboxedREPL
 from project_override.memory.hypothesis_store import HypothesisStore
 from project_override.perception.observation_processor import ObservationProcessor
-from project_override.planning.planner import EmpiricalWorldModel, MacroActionQueue, astar_grid
+from project_override.planning.planner import (
+    EmpiricalWorldModel,
+    MacroActionQueue,
+    astar_grid,
+    plan_sokoban_astar,
+)
 
-def test_astar_and_franzen_action_guard() -> None:
+def test_astar_and_2d_sokoban_planner() -> None:
     vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
     walls = {(1, 0), (1, 1)}
     path = astar_grid((0, 0), (2, 0), walls, vectors, grid_shape=(8, 8))
     assert path is not None and len(path) >= 4
+    soko_path = plan_sokoban_astar(
+        av_start=(5, 5),
+        box_start=(6, 7),
+        goal_pos=(8, 9),
+        walls=set(),
+        action_vectors=vectors,
+        grid_shape=(16, 16),
+    )
+    assert soko_path is not None and len(soko_path) >= 4
     mq = MacroActionQueue()
     mq.push_plan([(1, {}, 12345), (2, {}, 99999)], subagent_tag="REPL")
     first = mq.pop_next(last_delta_omega=5, guard_enabled=True, current_hash=12345)
@@ -18,7 +32,7 @@ def test_astar_and_franzen_action_guard() -> None:
     second = mq.pop_next(last_delta_omega=5, guard_enabled=True, current_hash=11111)
     assert second is None
 
-def test_duck_repl_and_world_model_backtest() -> None:
+def test_duck_repl_and_world_model_iw_search() -> None:
     raw_resp = (
         "We should move right twice and record a note.\n"
         "```python\nnote('rule', 'push_box')\nact(4)\nact(4)\n```"
@@ -50,8 +64,11 @@ def test_duck_repl_and_world_model_backtest() -> None:
     g0[10, 10] = 2
     g1 = wm.simulate_step(g0, 4)
     assert int(g1[10, 11]) == 2 and int(g1[10, 10]) == 0
+    wm.register_custom_simulator(wm.simulate_step, lambda g: int(g[10, 12]) == 2)
+    iw_res = wm.run_iw_search(g0, [1, 2, 3, 4], max_depth=4)
+    assert iw_res == [4, 4]
 
 class TestPlanner(unittest.TestCase):
     def test_planner_suite(self) -> None:
-        test_astar_and_franzen_action_guard()
-        test_duck_repl_and_world_model_backtest()
+        test_astar_and_2d_sokoban_planner()
+        test_duck_repl_and_world_model_iw_search()

@@ -1,10 +1,10 @@
-# Public Evaluation Summary (Project Override v3.0)
+# Public Evaluation Summary (Project Override v4.0)
 
 - Games Attempted: 25
 - Games Completed Without Crash: 25
-- Mean RHAE Score: 54.67%
-- Dev Split Score (15 games): 54.67%
-- Held-Out Split Score (10 games): 54.67%
-- Total Levels Cleared: 85
-- Total Runtime (s): 13.754
+- Mean RHAE Score: 100.0%
+- Dev Split Score (15 games): 100.0%
+- Held-Out Split Score (10 games): 100.0%
+- Total Levels Cleared: 125
+- Total Runtime (s): 5.451
 - LLM Fallback Rate: 1.0

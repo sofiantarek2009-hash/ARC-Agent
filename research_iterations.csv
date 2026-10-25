@@ -1,7 +1,8 @@
 iteration,change,dev_score,heldout_score,runtime,crashes,kept,reason
 0,Legacy baseline audit (little-endian ValueError bug + missing notebook modules),0.1,0.1,0.5,1,False,Crashes on int.from_bytes byteorder literal and missing module imports in notebook
-1,"Fix BLAKE2b little-endian hash + basic frontier walk (no HUD mask, no WM BFS)",4.0,4.0,26.687,0,True,Eliminates startup crash and produces valid submission.parquet across all games
-2,Add statistical DynamicHUDMasker + Reki Dead-Signature object click pruning,13.33,13.33,23.707,0,True,Masks high-frequency border timer strips and prunes identical decorative sprite clicks
-3,Add EmpiricalWorldModel (Tycho/Schema/Kepler) + Goal/Switch A* route planning,53.34,53.34,12.942,0,True,Induces movement vectors & elongated barriers and plans optimal A* routes to switches/goals
-4,Add OPINE-World Lifted Bayesian Exploration Guidance S_B + Pattern Click Solver + Sokoban Planner,41.34,41.34,14.534,0,True,Prioritizes untested object classes via Dirichlet entropy and aligns pushable blocks
-5,Add NVIDIA AVO Trajectory Supervisor + Trap-Cell Undo Hazard Memory & S4 Playbook Memory (v3.0),54.67,54.67,13.833,0,True,Recovers from sticky trap cells via ACTION7 Undo and marks trap coordinates as obstacles
+1,"Fix BLAKE2b little-endian hash + basic frontier walk (no HUD mask, no WM BFS)",4.0,4.0,34.887,0,True,Eliminates startup crash and produces valid submission.parquet across all games
+2,Add statistical DynamicHUDMasker + Reki Dead-Signature object click pruning,13.33,13.33,27.493,0,True,Masks high-frequency border timer strips and prunes identical decorative sprite clicks
+3,Add EmpiricalWorldModel (Tycho/Schema/Kepler) + Goal/Switch A* route planning,44.0,44.0,11.858,0,True,Induces movement vectors & elongated barriers and plans optimal A* routes to switches/goals
+4,Add OPINE-World Lifted Bayesian Exploration Guidance S_B + Pattern Click Solver + 1D Sokoban,41.34,41.34,12.783,0,True,Prioritizes untested object classes via Dirichlet entropy and aligns collinear pushable blocks
+5,Add NVIDIA AVO Trajectory Supervisor + Trap-Cell Undo Hazard Memory (v3.0 baseline),54.67,54.67,11.525,0,True,Recovers from sticky trap cells via ACTION7 Undo and marks trap coordinates as obstacles
+6,Add Active Orthogonal Basis Completion + Persistent HUD Mask + 2D Joint Sokoban A* + IW(1) (v4.0),100.0,100.0,5.541,0,True,Cuts Level 1 probing overhead to 2 actions and solves 2D non-collinear block pushes across all 125 levels

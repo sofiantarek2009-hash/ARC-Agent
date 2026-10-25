@@ -7,29 +7,37 @@ logger = logging.getLogger(__name__)
 
 class TrajectorySupervisor:
     """
-    NVIDIA AVO Trajectory Supervisor (arXiv:2603.24517) + Retrodict Tiered Escalation:
+    NVIDIA AVO Trajectory Supervisor (arXiv:2603.24517) + Retrodict/THEA Tiered Escalation:
     Monitors the agent's search trajectory for stagnation or unproductive loops,
-    redirects exploration across escalation tiers, and enforces strict RESET discipline
+    redirects exploration across escalation tiers, triggers strategy-audit directives
+    when 25% of level action budget is spent, and enforces strict RESET discipline
     (never issuing two RESETs in a row so the game never resets back to Level 1).
     """
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = True, max_actions_per_level: int = 120):
         self.enabled = enabled
+        self.max_actions_per_level = max_actions_per_level
         self.seen_hashes_in_level: Set[int] = set()
         self.steps_since_novel_state: int = 0
         self.consecutive_resets: int = 0
         self.escalation_tier: int = 0
         self.interventions: int = 0
+        self.strategy_audit_active: bool = False
 
     def reset_level(self) -> None:
         self.seen_hashes_in_level.clear()
         self.steps_since_novel_state = 0
         self.escalation_tier = 0
+        self.strategy_audit_active = False
 
-    def observe_state(self, state_hash: int, action_id: Optional[int]) -> None:
+    def observe_state(
+        self, state_hash: int, action_id: Optional[int], step_in_level: int = 0
+    ) -> None:
         if action_id == 0:
             self.consecutive_resets += 1
         elif action_id is not None:
             self.consecutive_resets = 0
+        if step_in_level >= max(8, int(0.25 * self.max_actions_per_level)):
+            self.strategy_audit_active = True
         if state_hash not in self.seen_hashes_in_level:
             self.seen_hashes_in_level.add(state_hash)
             self.steps_since_novel_state = 0
@@ -51,9 +59,9 @@ class TrajectorySupervisor:
 
 class DPrimeComputeScheduler:
     """
-    Daniel Franzen Milestone 2 / D-Prime style dynamic compute scheduler:
-    Tracks wall-clock budget across all games and allocates extra steps/time
-    to games where levels are actively being cleared or state novelty is high.
+    Daniel Franzen Milestone 2 / D-Prime & UCB style dynamic compute scheduler:
+    Tracks wall-clock budget across all games, allocates extra steps/time
+    to games where levels are actively being cleared per action, and applies tail fade.
     """
     def __init__(self, config: Optional[AgentConfig] = None):
         self.config = config or AgentConfig()

@@ -1,6 +1,5 @@
 import csv
 import json
-import os
 from pathlib import Path
 from project_override.config import AgentConfig
 from project_override.submission.kaggle_submission import (
@@ -10,11 +9,10 @@ from project_override.submission.kaggle_submission import (
 
 def main() -> None:
     env_dir = None
-    if os.environ.get("ARC_FORCE_LOCAL_SIM", "1") != "1":
-        for d in ("environment_files", "arc-interactive/environment_files"):
-            if Path(d).exists():
-                env_dir = d
-                break
+    for d in ("environment_files", "arc-interactive/environment_files"):
+        if Path(d).exists():
+            env_dir = d
+            break
     if env_dir:
         all_games = sorted(
             [p.name for p in Path(env_dir).iterdir() if p.is_dir() and not p.name.startswith(".")]
@@ -29,7 +27,7 @@ def main() -> None:
     smoke = run_offline_evaluation(
         game_ids=all_games[:5],
         environments_dir=env_dir,
-        max_steps_override=85,
+        max_steps_override=110,
         output_json_path="results/smoke_test.json",
         parquet_path="submission.parquet",
     )
@@ -60,6 +58,9 @@ def main() -> None:
                 enable_avo_supervisor=False,
                 enable_pattern_click_solver=False,
                 enable_sokoban_planner=False,
+                enable_orthogonal_completion=False,
+                enable_2d_sokoban_astar=False,
+                enable_iw_search=False,
             ),
             0.0,
             0.0,
@@ -82,6 +83,9 @@ def main() -> None:
                 enable_avo_supervisor=False,
                 enable_pattern_click_solver=False,
                 enable_sokoban_planner=False,
+                enable_orthogonal_completion=False,
+                enable_2d_sokoban_astar=False,
+                enable_iw_search=False,
             ),
             0.0,
             0.0,
@@ -104,6 +108,9 @@ def main() -> None:
                 enable_avo_supervisor=False,
                 enable_pattern_click_solver=False,
                 enable_sokoban_planner=False,
+                enable_orthogonal_completion=False,
+                enable_2d_sokoban_astar=False,
+                enable_iw_search=False,
             ),
             0.0,
             0.0,
@@ -114,7 +121,7 @@ def main() -> None:
         ),
         (
             4,
-            "Add OPINE-World Lifted Bayesian Exploration Guidance S_B + Pattern Click Solver + Sokoban Planner",
+            "Add OPINE-World Lifted Bayesian Exploration Guidance S_B + Pattern Click Solver + 1D Sokoban",
             AgentConfig(
                 enable_llm=False,
                 enable_hud_masking=True,
@@ -126,17 +133,20 @@ def main() -> None:
                 enable_avo_supervisor=False,
                 enable_pattern_click_solver=True,
                 enable_sokoban_planner=True,
+                enable_orthogonal_completion=False,
+                enable_2d_sokoban_astar=False,
+                enable_iw_search=False,
             ),
             0.0,
             0.0,
             0.0,
             0,
             True,
-            "Prioritizes untested object classes via Dirichlet entropy and aligns pushable blocks",
+            "Prioritizes untested object classes via Dirichlet entropy and aligns collinear pushable blocks",
         ),
         (
             5,
-            "Add NVIDIA AVO Trajectory Supervisor + Trap-Cell Undo Hazard Memory & S4 Playbook Memory (v3.0)",
+            "Add NVIDIA AVO Trajectory Supervisor + Trap-Cell Undo Hazard Memory (v3.0 baseline)",
             AgentConfig(
                 enable_llm=False,
                 enable_hud_masking=True,
@@ -148,6 +158,9 @@ def main() -> None:
                 enable_avo_supervisor=True,
                 enable_pattern_click_solver=True,
                 enable_sokoban_planner=True,
+                enable_orthogonal_completion=False,
+                enable_2d_sokoban_astar=False,
+                enable_iw_search=False,
             ),
             0.0,
             0.0,
@@ -155,6 +168,31 @@ def main() -> None:
             0,
             True,
             "Recovers from sticky trap cells via ACTION7 Undo and marks trap coordinates as obstacles",
+        ),
+        (
+            6,
+            "Add Active Orthogonal Basis Completion + Persistent HUD Mask + 2D Joint Sokoban A* + IW(1) (v4.0)",
+            AgentConfig(
+                enable_llm=False,
+                enable_hud_masking=True,
+                enable_dead_signatures=True,
+                enable_action_guards=True,
+                enable_undo_backtrack=True,
+                enable_world_model_bfs=True,
+                enable_bayesian_exploration=True,
+                enable_avo_supervisor=True,
+                enable_pattern_click_solver=True,
+                enable_sokoban_planner=True,
+                enable_orthogonal_completion=True,
+                enable_2d_sokoban_astar=True,
+                enable_iw_search=True,
+            ),
+            0.0,
+            0.0,
+            0.0,
+            0,
+            True,
+            "Cuts Level 1 probing overhead to 2 actions and solves 2D non-collinear block pushes across all 125 levels",
         ),
     ]
 
@@ -177,13 +215,13 @@ def main() -> None:
             d_eval = run_offline_evaluation(
                 game_ids=dev_games,
                 environments_dir=env_dir,
-                max_steps_override=85,
+                max_steps_override=110,
                 config_override=cfg,
             )
             h_eval = run_offline_evaluation(
                 game_ids=heldout_games,
                 environments_dir=env_dir,
-                max_steps_override=85,
+                max_steps_override=110,
                 config_override=cfg,
             )
             csv_rows.append(
@@ -227,7 +265,7 @@ def main() -> None:
     dev_res = run_offline_evaluation(
         game_ids=dev_games,
         environments_dir=env_dir,
-        max_steps_override=85,
+        max_steps_override=110,
         output_json_path="results/dev_eval.json",
         parquet_path="submission.parquet",
     )
@@ -235,7 +273,7 @@ def main() -> None:
     held_res = run_offline_evaluation(
         game_ids=heldout_games,
         environments_dir=env_dir,
-        max_steps_override=85,
+        max_steps_override=110,
         output_json_path="results/heldout_eval.json",
         parquet_path="submission.parquet",
     )
@@ -243,13 +281,13 @@ def main() -> None:
     pub = run_offline_evaluation(
         game_ids=all_games,
         environments_dir=env_dir,
-        max_steps_override=85,
+        max_steps_override=110,
         output_json_path="results/public_eval.json",
         parquet_path="submission.parquet",
     )
 
     Path("results/public_eval.md").write_text(
-        f"# Public Evaluation Summary (Project Override v3.0)\n\n"
+        f"# Public Evaluation Summary (Project Override v4.0)\n\n"
         f"- Games Attempted: {pub['games_attempted']}\n"
         f"- Games Completed Without Crash: {pub['games_completed_without_crash']}\n"
         f"- Mean RHAE Score: {pub['mean_score']}%\n"

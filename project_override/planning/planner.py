@@ -18,7 +18,7 @@ class MacroActionQueue:
         self.active_subagent: str = "NONE"
 
     def push_plan(
-        self, actions: List[Any], subagent_tag: str = "PLANNER", max_len: int = 14
+        self, actions: List[Any], subagent_tag: str = "PLANNER", max_len: int = 18
     ) -> None:
         self.queue.clear()
         self.active_subagent = subagent_tag
@@ -144,14 +144,91 @@ def astar_grid(
                 )
     return None
 
+def plan_sokoban_astar(
+    av_start: Tuple[int, int],
+    box_start: Tuple[int, int],
+    goal_pos: Tuple[int, int],
+    walls: Set[Tuple[int, int]],
+    action_vectors: Dict[int, Tuple[int, int]],
+    grid_shape: Tuple[int, int] = (64, 64),
+    max_expansions: int = 3000,
+) -> Optional[List[int]]:
+    """
+    Joint 2D State-Space Sokoban A* Planner over (av_r, av_c, box_r, box_c)
+    with corner/wall deadlock pruning. Solves both collinear and non-collinear
+    L-shaped block-pushing trajectories around obstacles.
+    """
+    if not action_vectors:
+        return None
+    h, w = grid_shape
+    strides = [
+        max(abs(dr), abs(dc))
+        for dr, dc in action_vectors.values()
+        if (dr, dc) != (0, 0)
+    ]
+    s = max(1, min(strides)) if strides else 1
+    if abs(box_start[0] - goal_pos[0]) < s and abs(box_start[1] - goal_pos[1]) < s:
+        return []
+
+    def is_corner_deadlock(br: int, bc: int) -> bool:
+        if abs(br - goal_pos[0]) < s and abs(bc - goal_pos[1]) < s:
+            return False
+        up_blocked = (br - s < 0) or ((br - s, bc) in walls)
+        down_blocked = (br + s >= h) or ((br + s, bc) in walls)
+        left_blocked = (bc - s < 0) or ((br, bc - s) in walls)
+        right_blocked = (bc + s >= w) or ((br, bc + s) in walls)
+        return (up_blocked or down_blocked) and (left_blocked or right_blocked)
+
+    def h_fn(ar: int, ac: int, br: int, bc: int) -> float:
+        d_box_goal = (abs(br - goal_pos[0]) + abs(bc - goal_pos[1])) / float(s)
+        d_av_box = max(0.0, (abs(ar - br) + abs(ac - bc)) / float(s) - 1.0)
+        return d_box_goal * 2.0 + d_av_box
+
+    init_state = (av_start[0], av_start[1], box_start[0], box_start[1])
+    open_heap: List[Tuple[float, int, Tuple[int, int, int, int], List[int]]] = [
+        (h_fn(*init_state), 0, init_state, [])
+    ]
+    visited: Dict[Tuple[int, int, int, int], int] = {init_state: 0}
+    expansions = 0
+
+    while open_heap and expansions < max_expansions:
+        _, g, (ar, ac, br, bc), path = heapq.heappop(open_heap)
+        expansions += 1
+        if abs(br - goal_pos[0]) < s and abs(bc - goal_pos[1]) < s:
+            return path
+        if len(path) >= 45:
+            continue
+        for act_id, (dr, dc) in action_vectors.items():
+            if dr == 0 and dc == 0:
+                continue
+            nar, nac = ar + dr, ac + dc
+            if not (0 <= nar < h and 0 <= nac < w) or (nar, nac) in walls:
+                continue
+            nbr, nbc = br, bc
+            if abs(nar - br) < s and abs(nac - bc) < s:
+                nbr, nbc = br + dr, bc + dc
+                if not (0 <= nbr < h and 0 <= nbc < w):
+                    continue
+                is_goal = abs(nbr - goal_pos[0]) < s and abs(nbc - goal_pos[1]) < s
+                if (nbr, nbc) in walls and not is_goal:
+                    continue
+                if is_corner_deadlock(nbr, nbc):
+                    continue
+            nxt_state = (nar, nac, nbr, nbc)
+            new_g = g + 1
+            if nxt_state not in visited or new_g < visited[nxt_state]:
+                visited[nxt_state] = new_g
+                heapq.heappush(
+                    open_heap,
+                    (new_g + h_fn(*nxt_state), new_g, nxt_state, path + [int(act_id)]),
+                )
+    return None
+
 class EmpiricalWorldModel:
     """
-    Executable World Model & Retrodiction Verifier (inspired by Tycho arXiv:2607.28287,
-    Schema schema-harness.github.io, Kepler arXiv:2610.00834, and Retrodict):
-    - Induces transition rules (movement, walls, pushable blocks, portals, click color cycles)
-      purely from observed grids and interaction history.
-    - Backtests (`run_backtest`) candidate models against recorded transitions.
-    - Searches (`plan_interactive_route` / `plan_click_pattern_match`) for minimal-action plans.
+    Executable World Model, Retrodiction Verifier & Iterated Width IW(1) Planner
+    (inspired by Tycho arXiv:2607.28287, Schema schema-harness.github.io, Kepler arXiv:2610.00834,
+    Retrodict, and OPINE-World arXiv:2607.01531).
     """
     def __init__(self, processor: ObservationProcessor, hypotheses: HypothesisStore):
         self.processor = processor
@@ -169,7 +246,12 @@ class EmpiricalWorldModel:
         self.custom_goal_fn = goal_fn
 
     def simulate_step(
-        self, grid: np.ndarray, action_id: int, x: int = 0, y: int = 0
+        self,
+        grid: np.ndarray,
+        action_id: int,
+        x: int = 0,
+        y: int = 0,
+        enable_orthogonal: bool = True,
     ) -> np.ndarray:
         if self.custom_step_fn is not None:
             try:
@@ -194,8 +276,9 @@ class EmpiricalWorldModel:
                             return nxt
                     nxt[cy, cx] = c_next
             return nxt
-        if int(action_id) in self.hypotheses.displacement_vectors:
-            dr, dc = self.hypotheses.displacement_vectors[int(action_id)]
+        eff_vecs = self.hypotheses.get_effective_vectors(enable_orthogonal=enable_orthogonal)
+        if int(action_id) in eff_vecs:
+            dr, dc = eff_vecs[int(action_id)]
             ents = self.processor.extract_entities(nxt, bg_color=bg)
             av_pos = self.hypotheses.locate_avatar(ents)
             if av_pos is not None:
@@ -215,7 +298,6 @@ class EmpiricalWorldModel:
         return nxt
 
     def run_backtest(self, history: List[TransitionRecord]) -> float:
-        """Replays the world model across recorded transitions to compute retrodictive accuracy."""
         valid_records = [
             r for r in history if r.pre_grid is not None and r.post_grid is not None and r.delta_omega > 0
         ]
@@ -230,13 +312,57 @@ class EmpiricalWorldModel:
         self.last_backtest_score = float(matches) / float(len(valid_records[-25:]))
         return self.last_backtest_score
 
+    def run_iw_search(
+        self,
+        grid: np.ndarray,
+        avail_actions: List[int],
+        max_depth: int = 10,
+        enable_orthogonal: bool = True,
+    ) -> Optional[List[int]]:
+        """
+        Iterated Width IW(1) forward search over the executable world model at zero environment cost.
+        Prunes any simulated state that fails to introduce at least one novel (r, c, color) atom.
+        """
+        move_acts = [a for a in avail_actions if a in (1, 2, 3, 4)]
+        if not move_acts:
+            return None
+        seen_atoms: Set[Tuple[int, int, int]] = set()
+
+        def harvest_atoms(g: np.ndarray) -> int:
+            novel = 0
+            for r in range(0, g.shape[0], 2):
+                for c in range(0, g.shape[1], 2):
+                    atom = (r, c, int(g[r, c]))
+                    if atom not in seen_atoms:
+                        seen_atoms.add(atom)
+                        novel += 1
+            return novel
+
+        harvest_atoms(grid)
+        queue: deque = deque([(grid.copy(), [])])
+        expansions = 0
+        while queue and expansions < 250:
+            curr_g, path = queue.popleft()
+            expansions += 1
+            if self.custom_goal_fn is not None and path:
+                try:
+                    if self.custom_goal_fn(curr_g):
+                        return path
+                except Exception:
+                    pass
+            if len(path) >= max_depth:
+                continue
+            for act_id in move_acts:
+                nxt_g = self.simulate_step(
+                    curr_g, act_id, enable_orthogonal=enable_orthogonal
+                )
+                if harvest_atoms(nxt_g) > 0:
+                    queue.append((nxt_g, path + [int(act_id)]))
+        return None
+
     def infer_obstacle_cells(
         self, grid: np.ndarray, entities: List[Entity], known_walls: Set[Tuple[int, int]]
     ) -> Set[Tuple[int, int]]:
-        """
-        Combines empirically blocked cells with pixels belonging to inferred wall colors
-        or elongated barrier structures (aspect ratio >= 3:1 or mass >= 4).
-        """
         obs_cells: Set[Tuple[int, int]] = set(known_walls)
         for e in entities:
             r0, c0, r1, c1 = e.bbox
@@ -262,94 +388,96 @@ class EmpiricalWorldModel:
         walls: Set[Tuple[int, int]],
         visited_centers: Set[Tuple[int, int]],
         enable_sokoban: bool = True,
+        enable_2d_sokoban: bool = True,
+        enable_orthogonal: bool = True,
     ) -> Optional[List[int]]:
-        """
-        Plans shortest A* route to unvisited interactive objects (switches, keys, goals, portals)
-        or box-pushing alignments using inferred displacement vectors.
-        """
-        if not self.hypotheses.displacement_vectors:
+        eff_vecs = self.hypotheses.get_effective_vectors(enable_orthogonal=enable_orthogonal)
+        if not eff_vecs:
             return None
         av_colors = self.hypotheses.avatar_colors
         effective_walls = self.infer_obstacle_cells(grid, entities, walls)
 
+        all_interactive: List[Entity] = []
         candidates: List[Entity] = []
         for e in entities:
             rc = (int(round(e.centroid[0])), int(round(e.centroid[1])))
-            if rc == av_pos:
-                continue
-            if rc in effective_walls:
+            if rc == av_pos or rc in effective_walls:
                 continue
             if e.color in self.hypotheses.wall_colors or e.color in self.hypotheses.hazard_colors:
                 continue
             if e.color in av_colors and e.mass <= 4:
                 continue
-            if rc in visited_centers and e.color not in self.hypotheses.pushable_colors:
-                continue
-            # Exclude border/perimeter HUD indicator strip (rows 0..3, 60..63 or cols 0..3, 60..63)
-            # from interactive playfield puzzle targets
-            if rc[0] < 4 or rc[0] > 59 or rc[1] < 4 or rc[1] > 59:
-                continue
             if 1 <= e.mass <= 36:
-                candidates.append(e)
-        if not candidates:
-            return None
+                all_interactive.append(e)
+                if rc not in visited_centers or e.color in self.hypotheses.pushable_colors:
+                    candidates.append(e)
 
-        if enable_sokoban and len(candidates) >= 2:
-            push_ents = [e for e in candidates if e.color in self.hypotheses.pushable_colors]
-            if not push_ents and len(candidates) == 2:
+        if enable_sokoban and len(all_interactive) >= 2:
+            push_ents = [e for e in all_interactive if e.color in self.hypotheses.pushable_colors]
+            if not push_ents and len(all_interactive) == 2:
                 c_sorted = sorted(
-                    candidates,
+                    all_interactive,
                     key=lambda e: abs(int(round(e.centroid[0])) - av_pos[0])
                     + abs(int(round(e.centroid[1])) - av_pos[1]),
                 )
                 if c_sorted[0].color != c_sorted[1].color:
                     push_ents = [c_sorted[0]]
-            target_ents = [e for e in candidates if e not in push_ents]
+            target_ents = [e for e in all_interactive if e not in push_ents]
             if push_ents and target_ents:
                 box = push_ents[0]
-                target_ents = sorted(
-                    target_ents,
-                    key=lambda g: abs(int(round(box.centroid[0])) - int(round(g.centroid[0])))
-                    + abs(int(round(box.centroid[1])) - int(round(g.centroid[1]))),
-                )
                 goal = target_ents[0]
                 br, bc = int(round(box.centroid[0])), int(round(box.centroid[1]))
                 gr, gc = int(round(goal.centroid[0])), int(round(goal.centroid[1]))
-                for act_id, (dr, dc) in self.hypotheses.displacement_vectors.items():
-                    if (dr, dc) == (0, 0):
-                        continue
-                    nbr, nbc = br + dr, bc + dc
-                    push_stand = (br - dr, bc - dc)
-                    old_d = abs(br - gr) + abs(bc - gc)
-                    nd = abs(nbr - gr) + abs(nbc - gc)
-                    if (
-                        nd < old_d
-                        and 0 <= push_stand[0] < grid.shape[0]
-                        and 0 <= push_stand[1] < grid.shape[1]
-                        and push_stand not in effective_walls
-                        and (nbr, nbc) not in effective_walls
-                    ):
-                        n_pushes = 1
-                        cr_b, cc_b = nbr, nbc
-                        while (cr_b, cc_b) != (gr, gc):
-                            nx_b, ny_b = cr_b + dr, cc_b + dc
-                            if abs(nx_b - gr) + abs(ny_b - gc) < abs(cr_b - gr) + abs(cc_b - gc):
-                                n_pushes += 1
-                                cr_b, cc_b = nx_b, ny_b
-                            else:
-                                break
-                        if av_pos == push_stand:
-                            return [int(act_id)] * n_pushes
-                        path_to_stand = astar_grid(
-                            av_pos,
-                            push_stand,
-                            effective_walls | {(br, bc)},
-                            self.hypotheses.displacement_vectors,
-                            grid.shape,
-                            portals=self.hypotheses.portal_map,
-                        )
-                        if path_to_stand is not None:
-                            return path_to_stand + ([int(act_id)] * n_pushes)
+                if enable_2d_sokoban:
+                    soko_plan = plan_sokoban_astar(
+                        av_pos,
+                        (br, bc),
+                        (gr, gc),
+                        effective_walls,
+                        eff_vecs,
+                        grid.shape,
+                    )
+                    if soko_plan:
+                        return soko_plan
+                else:
+                    for act_id, (dr, dc) in eff_vecs.items():
+                        if (dr, dc) == (0, 0):
+                            continue
+                        nbr, nbc = br + dr, bc + dc
+                        push_stand = (br - dr, bc - dc)
+                        old_d = abs(br - gr) + abs(bc - gc)
+                        nd = abs(nbr - gr) + abs(nbc - gc)
+                        if (
+                            nd < old_d
+                            and 0 <= push_stand[0] < grid.shape[0]
+                            and 0 <= push_stand[1] < grid.shape[1]
+                            and push_stand not in effective_walls
+                            and (nbr, nbc) not in effective_walls
+                        ):
+                            n_pushes = 1
+                            cr_b, cc_b = nbr, nbc
+                            while (cr_b, cc_b) != (gr, gc):
+                                nx_b, ny_b = cr_b + dr, cc_b + dc
+                                if abs(nx_b - gr) + abs(ny_b - gc) < abs(cr_b - gr) + abs(cc_b - gc):
+                                    n_pushes += 1
+                                    cr_b, cc_b = nx_b, ny_b
+                                else:
+                                    break
+                            if av_pos == push_stand:
+                                return [int(act_id)] * n_pushes
+                            path_to_stand = astar_grid(
+                                av_pos,
+                                push_stand,
+                                effective_walls | {(br, bc)},
+                                eff_vecs,
+                                grid.shape,
+                                portals=self.hypotheses.portal_map,
+                            )
+                            if path_to_stand is not None:
+                                return path_to_stand + ([int(act_id)] * n_pushes)
+
+        if not candidates:
+            return None
 
         def _target_key(ent: Entity) -> Tuple[float, float]:
             rc = (int(round(ent.centroid[0])), int(round(ent.centroid[1])))
@@ -367,7 +495,7 @@ class EmpiricalWorldModel:
                 av_pos,
                 target_rc,
                 effective_walls,
-                self.hypotheses.displacement_vectors,
+                eff_vecs,
                 grid.shape,
                 portals=self.hypotheses.portal_map,
             )
@@ -383,10 +511,6 @@ class EmpiricalWorldModel:
         ledger: Any,
         level_idx: int = 0,
     ) -> Optional[Tuple[int, Dict[str, int], Optional[Tuple[int, int, int, int]]]]:
-        """
-        Detects reference vs modifiable tile patterns (e.g. symmetry / color-cycle puzzles like ft09)
-        and selects the exact mismatched tile to click via ACTION6.
-        """
         if len(entities) < 2:
             return None
         by_shape: Dict[Tuple[int, int, int], List[Entity]] = {}

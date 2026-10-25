@@ -63,12 +63,16 @@ class BayesianExplorationTracker:
 
 class HypothesisStore:
     """
-    S4 Epistemic Persistence Store (arXiv:2610.26632) + Retrodict Playbook Memory:
+    S4 Epistemic Persistence Store (arXiv:2610.26632) + Retrodict Playbook Memory + TELL Role Transfer:
     Separates WorkingModel (checked_rules vs assumed_hypotheses across levels)
-    from WorkingMemory (current level attempt state) and retains reasoning replay.
+    from WorkingMemory (current level attempt state), supports Active Orthogonal Basis Completion
+    to eliminate the Level 1 probing tax, and retains native reasoning replay.
     """
+    OPPOSITE_ACTION = {1: 2, 2: 1, 3: 4, 4: 3}
+
     def __init__(self, max_reasoning_items: int = 14):
         self.displacement_vectors: Dict[int, Tuple[int, int]] = {}
+        self.provisional_vectors: Dict[int, Tuple[int, int]] = {}
         self.avatar_colors: Set[int] = set()
         self.wall_colors: Set[int] = set()
         self.hazard_colors: Set[int] = set()
@@ -85,9 +89,22 @@ class HypothesisStore:
         self.bayesian_tracker = BayesianExplorationTracker()
         self.interacted_object_centers: Set[Tuple[int, int]] = set()
 
+    def get_effective_vectors(self, enable_orthogonal: bool = True) -> Dict[int, Tuple[int, int]]:
+        if not enable_orthogonal:
+            return dict(self.displacement_vectors)
+        merged = dict(self.provisional_vectors)
+        merged.update(self.displacement_vectors)
+        return merged
+
+    def has_2d_movement_basis(self, enable_orthogonal: bool = True) -> bool:
+        vecs = self.get_effective_vectors(enable_orthogonal=enable_orthogonal)
+        has_vert = any(dr != 0 and dc == 0 for dr, dc in vecs.values())
+        has_horiz = any(dr == 0 and dc != 0 for dr, dc in vecs.values())
+        return has_vert and has_horiz and len(vecs) >= 4
+
     def reset_for_new_level(self, cleared_previous: bool = False, prev_level: int = 0) -> None:
         if cleared_previous:
-            vec_str = ", ".join(f"A{k}:{v}" for k, v in sorted(self.displacement_vectors.items()))
+            vec_str = ", ".join(f"A{k}:{v}" for k, v in sorted(self.get_effective_vectors().items()))
             summary = (
                 f"Cleared Level {prev_level}: avatar={sorted(self.avatar_colors)}, "
                 f"vectors={{{vec_str}}}, pushable={sorted(self.pushable_colors)}, "
@@ -105,6 +122,7 @@ class HypothesisStore:
         pre_grid: Optional[np.ndarray] = None,
         post_grid: Optional[np.ndarray] = None,
         click_xy: Tuple[int, int] = (0, 0),
+        enable_orthogonal: bool = True,
     ) -> None:
         if action_id == 6 and pre_grid is not None and post_grid is not None:
             cx, cy = int(click_xy[0]), int(click_xy[1])
@@ -117,50 +135,36 @@ class HypothesisStore:
             return
         if action_id not in (1, 2, 3, 4) or not tracked:
             return
-
-        if len(tracked) == 1:
-            pe, ce, (dr, dc) = tracked[0]
-            ir, ic = int(round(dr)), int(round(dc))
-            if (ir != 0 or ic != 0) and abs(ir) <= 16 and abs(ic) <= 16:
-                known_strides = [
-                    max(abs(v[0]), abs(v[1])) for v in self.displacement_vectors.values()
-                ]
-                min_stride = min(known_strides) if known_strides else max(abs(ir), abs(ic))
-                if known_strides and max(abs(ir), abs(ic)) > max(3, min_stride * 2):
-                    p_in = (
-                        int(round(pe.centroid[0]))
-                        + self.displacement_vectors.get(action_id, (0, 0))[0],
-                        int(round(pe.centroid[1]))
-                        + self.displacement_vectors.get(action_id, (0, 0))[1],
-                    )
-                    p_out = (int(round(ce.centroid[0])), int(round(ce.centroid[1])))
-                    self.portal_map[p_in] = p_out
-                else:
-                    self.displacement_vectors[int(action_id)] = (ir, ic)
-                    if pe.color not in self.pushable_colors:
-                        self.avatar_colors.add(pe.color)
-                    self.checked_rules[f"move_A{action_id}"] = f"delta=({ir},{ic})"
-        else:
-            # Multi-entity movement: isolate controllable avatar from displaced pushable crates
-            av_item = None
-            for item in tracked:
-                if self.avatar_colors and item[0].color in self.avatar_colors:
-                    av_item = item
-                    break
-            if av_item is None:
-                non_push = [item for item in tracked if item[0].color not in self.pushable_colors]
-                av_item = non_push[0] if non_push else tracked[0]
-
-            if av_item is not None and av_item[0].color not in self.pushable_colors:
-                self.avatar_colors.add(av_item[0].color)
-
-            for item in tracked:
-                if item is not av_item:
-                    pe_push, ce_push, (dr_p, dc_p) = item
-                    if abs(dr_p) > 0.1 or abs(dc_p) > 0.1:
-                        if pe_push.color not in self.avatar_colors:
-                            self.pushable_colors.add(pe_push.color)
-                            self.checked_rules[f"pushable_c{pe_push.color}"] = "movable_block"
+        tracked_sorted = sorted(tracked, key=lambda item: item[0].mass)
+        pe, ce, (dr, dc) = tracked_sorted[0]
+        ir, ic = int(round(dr)), int(round(dc))
+        if (ir != 0 or ic != 0) and abs(ir) <= 16 and abs(ic) <= 16:
+            known_strides = [
+                max(abs(v[0]), abs(v[1])) for v in self.displacement_vectors.values()
+            ]
+            min_stride = min(known_strides) if known_strides else max(abs(ir), abs(ic))
+            if known_strides and max(abs(ir), abs(ic)) > max(3, min_stride * 2):
+                p_in = (
+                    int(round(pe.centroid[0]))
+                    + self.displacement_vectors.get(action_id, (0, 0))[0],
+                    int(round(pe.centroid[1]))
+                    + self.displacement_vectors.get(action_id, (0, 0))[1],
+                )
+                p_out = (int(round(ce.centroid[0])), int(round(ce.centroid[1])))
+                self.portal_map[p_in] = p_out
+            else:
+                self.displacement_vectors[int(action_id)] = (ir, ic)
+                self.avatar_colors.add(pe.color)
+                self.checked_rules[f"move_A{action_id}"] = f"delta=({ir},{ic})"
+                opp = self.OPPOSITE_ACTION.get(int(action_id))
+                if enable_orthogonal and opp is not None and opp not in self.displacement_vectors:
+                    self.provisional_vectors[opp] = (-ir, -ic)
+                    self.assumed_hypotheses[f"ortho_A{opp}"] = f"assumed_delta=({-ir},{-ic})"
+        if len(tracked_sorted) >= 2:
+            pe2, ce2, (dr2, dc2) = tracked_sorted[1]
+            if abs(dr2) > 0.1 or abs(dc2) > 0.1:
+                self.pushable_colors.add(pe2.color)
+                self.checked_rules[f"pushable_c{pe2.color}"] = "movable_block"
 
     def locate_avatar(self, entities: List[Entity]) -> Optional[Tuple[int, int]]:
         if not entities:
@@ -179,13 +183,15 @@ class HypothesisStore:
             self.reasoning_replay.append(f"[L{level_idx}:S{step_idx}] {clean}")
 
     def format_epistemic_memory(self) -> str:
-        vecs = ", ".join(f"A{k}:{v}" for k, v in sorted(self.displacement_vectors.items()))
+        vecs = ", ".join(f"A{k}:{v}" for k, v in sorted(self.get_effective_vectors().items()))
         checked_str = "; ".join(f"{k}={v}" for k, v in list(self.checked_rules.items())[-6:])
+        assumed_str = "; ".join(f"{k}={v}" for k, v in list(self.assumed_hypotheses.items())[-4:])
         notes_str = "; ".join(f"{k}={v}" for k, v in list(self.persistent_notes.items())[-6:])
         clears = " | ".join(self.level_clear_summaries[-4:])
         replay = "\n  ".join(self.reasoning_replay)
         return (
             f"PLAYBOOK_WORKING_MODEL (CHECKED): {{{checked_str or vecs}}}\n"
+            f"ASSUMED_HYPOTHESES: {{{assumed_str or 'None'}}}\n"
             f"AVATAR_COLORS: {sorted(self.avatar_colors)} | PUSHABLE: {sorted(self.pushable_colors)} | CLICK_MAP: {self.click_color_transitions}\n"
             f"LEVEL_INVARIANTS: {clears or 'None yet'}\n"
             f"WORKING_MEMORY_NOTES: {notes_str or 'Empty'}\n"

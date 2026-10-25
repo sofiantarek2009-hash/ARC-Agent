@@ -3,6 +3,7 @@ from project_override.planning.planner import (
     EmpiricalWorldModel,
     MacroActionQueue,
     astar_grid,
+    plan_sokoban_astar,
 )
 
 __all__ = [
@@ -11,4 +12,5 @@ __all__ = [
     "EmpiricalWorldModel",
     "MacroActionQueue",
     "astar_grid",
+    "plan_sokoban_astar",
 ]

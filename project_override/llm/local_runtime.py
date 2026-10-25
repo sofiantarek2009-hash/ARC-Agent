@@ -42,7 +42,8 @@ def parse_llm_response(text: str) -> Optional[Dict[str, Any]]:
 class LocalLLMRuntime:
     """
     Offline open-weight LLM loader supporting local SGLang/vLLM HTTP endpoints
-    (for Intel/Qwen3.8-Flash-Next-W4A16-AutoRound + albucino speculative drafter MTP=3)
+    (for Intel/Qwen3.8-Flash-Next-W4A16-AutoRound + albucino speculative drafter MTP=3,
+    or primitive-ai/Qwen3.8-Flash-Next-mixed-NVFP4-FP8 with VLLM_GDN_DECODE_KERNEL=triton)
     and local HuggingFace checkpoints, with hard latency/token budgets and non-LLM fallback.
     """
     _INSTANCE: Optional["LocalLLMRuntime"] = None
@@ -50,6 +51,7 @@ class LocalLLMRuntime:
 
     def __init__(self, config: Optional[AgentConfig] = None):
         self.config = config or AgentConfig()
+        os.environ.setdefault("VLLM_GDN_DECODE_KERNEL", "triton")
         self.http_endpoint: Optional[str] = None
         self.http_model_name: str = "default"
         self.model_path: Optional[str] = self._resolve_model_path()
@@ -82,7 +84,7 @@ class LocalLLMRuntime:
                 low = str(cfg).lower()
                 if "drafter" in low:
                     continue
-                if any(k in low for k in ("qwen", "gemma", "coder", "flash", "autoround")):
+                if any(k in low for k in ("qwen", "gemma", "coder", "flash", "autoround", "nvfp4")):
                     return str(cfg.parent)
         return None
 
@@ -106,7 +108,7 @@ class LocalLLMRuntime:
                 continue
             try:
                 req = urllib.request.Request(f"{base_url}/models", method="GET")
-                with urllib.request.urlopen(req, timeout=1.5) as resp:
+                with urllib.request.urlopen(req, timeout=0.8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     models = data.get("data", [])
                     if models:

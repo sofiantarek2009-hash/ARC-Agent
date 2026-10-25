@@ -86,7 +86,7 @@ class DynamicHUDMasker:
         return arr
 
 class ObservationProcessor:
-    """Normalizes grids, segments connected objects, and summarizes multi-frame transitions."""
+    """Normalizes grids, segments connected objects, and extracts subframe kinematics."""
     def __init__(self, enable_hud_masking: bool = True) -> None:
         self.hud_masker = DynamicHUDMasker(enabled=enable_hud_masking)
 
@@ -219,6 +219,20 @@ class ObservationProcessor:
             if abs(dr) > 0.1 or abs(dc) > 0.1:
                 tracked.append((pe, ce, (dr, dc)))
         return tracked
+
+    def extract_subframe_kinematics(
+        self, prev_grid: np.ndarray, anim_frames: List[np.ndarray], bg_color: int
+    ) -> List[Tuple[Entity, Entity, Tuple[float, float]]]:
+        """Kepler sp80 visual lesson: extracts first-subframe impulse vector when multi-frame animations occur."""
+        if not anim_frames:
+            return []
+        prev_ents = self.extract_entities(prev_grid, bg_color=bg_color)
+        first_ents = self.extract_entities(anim_frames[0], bg_color=bg_color)
+        tracked_first = self.track_entities(prev_ents, first_ents)
+        if tracked_first or len(anim_frames) == 1:
+            return tracked_first
+        last_ents = self.extract_entities(anim_frames[-1], bg_color=bg_color)
+        return self.track_entities(prev_ents, last_ents)
 
     def compute_delta_omega(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> int:
         a = np.asarray(prev_grid, dtype=np.int8)

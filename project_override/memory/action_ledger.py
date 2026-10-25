@@ -47,7 +47,8 @@ def pack_signature_64(
 class ActionLedger:
     """
     Tracks state-action-result transitions, dead signatures, object click no-ops,
-    and PRO-LONG programmatic event history (arXiv:2607.20064).
+    PRO-LONG programmatic event history (arXiv:2607.20064), and Ledger Inform/Govern
+    online execution state mediation (Wang et al., arXiv:2608.00808).
     """
     INVERSE_MAP = {1: 2, 2: 1, 3: 4, 4: 3}
 
@@ -169,6 +170,28 @@ class ActionLedger:
                 }
             )
         return out
+
+    def render_execution_state(self, current_hash: int, avail_actions: List[int], level_idx: int) -> str:
+        """Ledger Inform Path (arXiv:2608.00808): distills current state visits, tried actions, and dead actions."""
+        visits = self.state_visit_counts.get(current_hash, 1)
+        tried_map = self.transitions.get(current_hash, {})
+        tried_str = ", ".join(f"A{k[0]}({k[1]},{k[2]})->h{v & 0xFFFF:04x}" for k, v in list(tried_map.items())[:6])
+        dead_here = [
+            a for a in avail_actions if a in (1, 2, 3, 4, 5, 7) and self.is_dead(current_hash, a, 0, 0, level_idx)
+        ]
+        return f"STATE_VISITS={visits} | TRIED_FROM_HERE=[{tried_str}] | DEAD_HERE={dead_here}"
+
+    def govern_action(
+        self,
+        current_hash: int,
+        action_id: int,
+        x: int = 0,
+        y: int = 0,
+        level_idx: int = 0,
+        obj_sig: Optional[Tuple[int, int, int, int]] = None,
+    ) -> bool:
+        """Ledger Govern Path (arXiv:2608.00808): mediates proposed commands before environment execution."""
+        return not self.is_dead(current_hash, action_id, x, y, level_idx, obj_sig=obj_sig)
 
     def update_novelty(self, grid: np.ndarray) -> int:
         arr = np.asarray(grid, dtype=np.int8)

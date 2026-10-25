@@ -12,7 +12,12 @@ from project_override.memory.hypothesis_store import BayesianExplorationTracker,
 from project_override.orchestration.general_agent import GeneralAgent
 from project_override.perception.observation_processor import DynamicHUDMasker, ObservationProcessor
 from project_override.planning.explorer import SmartClickExplorer, bfs_frontier_explore
-from project_override.planning.planner import EmpiricalWorldModel, MacroActionQueue, astar_grid
+from project_override.planning.planner import (
+    EmpiricalWorldModel,
+    MacroActionQueue,
+    astar_grid,
+    plan_sokoban_astar,
+)
 from project_override.submission.kaggle_submission import (
     REQUIRED_PARQUET_COLUMNS,
     compute_game_rhae,

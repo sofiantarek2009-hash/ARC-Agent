@@ -31,7 +31,7 @@ class SandboxedREPL:
         "input",
     }
 
-    def __init__(self, max_plan_len: int = 14):
+    def __init__(self, max_plan_len: int = 18):
         self.max_plan_len = max_plan_len
 
     def validate_ast(self, code_str: str) -> bool:
