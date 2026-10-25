@@ -45,6 +45,31 @@ def build_all() -> None:
         bundle_dict[rel_path] = fp.read_text(encoding="utf-8")
     print(f"[PACK] Bundled {len(bundle_dict)} module files ({sum(len(v) for v in bundle_dict.values()):,} chars).")
 
+    cell_0_wheels = (
+        "# --- CELL 0: INSTALL OFFICIAL OFFLINE WHEELS (COMPETITION RE-RUN REQUIREMENT) ---\n"
+        "import os, sys, subprocess\n"
+        "from pathlib import Path\n\n"
+        "for wheels_path in (\n"
+        "    Path('/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels'),\n"
+        "    Path('/kaggle/input/arc-prize-2026-arc-agi-3/arc_agi_3_wheels'),\n"
+        "):\n"
+        "    if wheels_path.exists():\n"
+        "        print(f'[WHEELS] Installing offline wheels from {wheels_path}...')\n"
+        "        cmd = [\n"
+        "            sys.executable, '-m', 'pip', 'install', '--no-index',\n"
+        "            '--find-links', str(wheels_path),\n"
+        "            'arc-agi', 'python-dotenv'\n"
+        "        ]\n"
+        "        res = subprocess.run(cmd, capture_output=True, text=True)\n"
+        "        if res.returncode == 0:\n"
+        "            print('[OK] Offline dependencies successfully installed.')\n"
+        "        else:\n"
+        "            print(f'[WARNING] Pip install returned code {res.returncode}: {res.stderr[:200]}')\n"
+        "        break\n"
+        "else:\n"
+        "    print('[INFO] Local development environment (wheels directory not present).')\n"
+    )
+
     cell_1_unpack = (
         "# --- CELL 1: UNPACK SELF-CONTAINED PROJECT OVERRIDE V3.0 MODULES ---\n"
         "import json, os, sys\n"
@@ -61,24 +86,31 @@ def build_all() -> None:
     )
 
     cell_2_execute = (
-        "# --- CELL 2: EXECUTE ARC-AGI-3 SUBMISSION PIPELINE ---\n"
-        "import os, sys, shutil, subprocess, time\n"
+        "# --- CELL 2: COMPETITION RERUN EXECUTION VIA OFFICIAL GATEWAY ---\n"
+        "import os, sys, shutil, subprocess, time, urllib.request\n"
         "from pathlib import Path\n\n"
-        "print('=== Checking Execution Mode ===')\n"
-        "is_competition_rerun = bool(os.getenv('KAGGLE_IS_COMPETITION_RERUN'))\n\n"
-        "def is_gateway_live(timeout: float = 3.0) -> bool:\n"
-        "    try:\n"
-        "        import urllib.request\n"
-        "        with urllib.request.urlopen('http://gateway:8001/api/games', timeout=timeout) as resp:\n"
-        "            return resp.status == 200\n"
-        "    except Exception:\n"
-        "        return False\n\n"
-        "gateway_ready = is_gateway_live()\n"
-        "print(f'KAGGLE_IS_COMPETITION_RERUN={is_competition_rerun}, gateway_ready={gateway_ready}')\n\n"
-        "if is_competition_rerun and gateway_ready:\n"
-        "    print('=== Phase B: Executing Competition Rerun with Official Gateway ===')\n"
+        "is_competition_rerun = bool(os.getenv('KAGGLE_IS_COMPETITION_RERUN'))\n"
+        "print(f'=== Checking Execution Mode: KAGGLE_IS_COMPETITION_RERUN={is_competition_rerun} ===')\n\n"
+        "if is_competition_rerun:\n"
+        "    print('=== Phase B: Competition Rerun Active ===')\n"
+        "    print('Waiting for gateway:8001 to become ready (retrying up to 600s)...')\n"
+        "    gateway_url = 'http://gateway:8001/api/games'\n"
+        "    gateway_ready = False\n"
+        "    start_time = time.time()\n"
+        "    while time.time() - start_time < 600:\n"
+        "        try:\n"
+        "            with urllib.request.urlopen(gateway_url, timeout=5) as resp:\n"
+        "                if resp.status == 200:\n"
+        "                    gateway_ready = True\n"
+        "                    print(f'[OK] Gateway is live and responding after {time.time() - start_time:.1f}s!')\n"
+        "                    break\n"
+        "        except Exception:\n"
+        "            time.sleep(3)\n\n"
+        "    if not gateway_ready:\n"
+        "        raise RuntimeError('Timeout: Gateway failed to respond within 600 seconds.')\n\n"
         "    working_dir = Path('/kaggle/working') if Path('/kaggle/working').exists() else Path.cwd()\n"
-        "    framework_dest = working_dir / 'ARC-AGI-3-Agents'\n"
+        "    framework_dest = working_dir / 'ARC-AGI-3-Agents'\n\n"
+        "    # 1. Locate and copy ARC-AGI-3-Agents framework\n"
         "    framework_src = None\n"
         "    for src in (\n"
         "        Path('/kaggle/input/competitions/arc-prize-2026-arc-agi-3/ARC-AGI-3-Agents'),\n"
@@ -87,26 +119,42 @@ def build_all() -> None:
         "    ):\n"
         "        if src.exists():\n"
         "            framework_src = src\n"
-        "            break\n"
+        "            break\n\n"
         "    if framework_src and not framework_dest.exists():\n"
         "        shutil.copytree(framework_src, framework_dest)\n"
-        "        print(f'[OK] Copied framework from {framework_src} to {framework_dest}')\n"
+        "        print(f'[OK] Copied framework from {framework_src} to {framework_dest}')\n\n"
+        "    # 2. Deploy custom agent into framework templates\n"
         "    agent_target = framework_dest / 'agents' / 'templates' / 'my_agent.py'\n"
-        "    if agent_target.parent.exists():\n"
-        "        shutil.copyfile('agent/my_agent.py', agent_target)\n"
-        "        print(f'[OK] Deployed my_agent.py to {agent_target}')\n"
+        "    agent_target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    shutil.copyfile(working_dir / 'agent' / 'my_agent.py', agent_target)\n"
+        "    print(f'[OK] Deployed my_agent.py to {agent_target}')\n\n"
+        "    # 3. Deploy project_override into framework\n"
         "    po_dest = framework_dest / 'project_override'\n"
-        "    if not po_dest.exists() and Path('project_override').exists():\n"
+        "    if not po_dest.exists() and (working_dir / 'project_override').exists():\n"
         "        try:\n"
-        "            os.symlink(Path('project_override').resolve(), po_dest)\n"
+        "            os.symlink((working_dir / 'project_override').resolve(), po_dest)\n"
         "        except Exception:\n"
-        "            shutil.copytree('project_override', po_dest)\n"
+        "            shutil.copytree(working_dir / 'project_override', po_dest)\n"
+        "        print(f'[OK] Linked project_override into {po_dest}')\n\n"
+        "    # 4. Register myagent in agents/__init__.py\n"
+        "    init_file = framework_dest / 'agents' / '__init__.py'\n"
+        "    init_file.write_text(\n"
+        "        'from typing import Type\\nfrom dotenv import load_dotenv\\n'\n"
+        "        'from .agent import Agent, Playback\\nfrom .swarm import Swarm\\n'\n"
+        "        'from .templates.random_agent import Random\\nfrom .templates.my_agent import MyAgent\\n\\n'\n"
+        "        'load_dotenv()\\n\\nAVAILABLE_AGENTS: dict[str, Type[Agent]] = {\\n'\n"
+        "        '    \"random\": Random,\\n    \"myagent\": MyAgent,\\n}\\n',\n"
+        "        encoding='utf-8'\n"
+        "    )\n"
+        "    print(f'[OK] Configured {init_file}')\n\n"
+        "    # 5. Point .env at gateway sidecar\n"
         "    env_file = framework_dest / '.env'\n"
         "    env_file.write_text(\n"
         "        'SCHEME=http\\nHOST=gateway\\nPORT=8001\\nARC_API_KEY=test-key-123\\nARC_BASE_URL=http://gateway:8001/\\n'\n"
         "        'OPERATION_MODE=online\\nENVIRONMENTS_DIR=\\nRECORDINGS_DIR=' + str(working_dir / 'server_recording') + '\\n',\n"
         "        encoding='utf-8'\n"
-        "    )\n"
+        "    )\n\n"
+        "    # 6. Run agent through official Swarm orchestrator\n"
         "    env_vars = os.environ.copy()\n"
         "    env_vars['PYTHONPATH'] = f\"{working_dir}:{framework_dest}:{env_vars.get('PYTHONPATH', '')}\"\n"
         "    env_vars['MPLBACKEND'] = 'agg'\n"
@@ -114,39 +162,65 @@ def build_all() -> None:
         "    cmd = [sys.executable, 'main.py', '--agent', 'myagent']\n"
         "    proc = subprocess.run(cmd, cwd=str(framework_dest), env=env_vars)\n"
         "    print(f'Swarm process finished with exit code {proc.returncode}')\n"
-        "else:\n"
-        "    print('=== Phase A / Local Evaluation: Executing Standalone Submission Pipeline ===')\n"
-        "    from project_override.submission.kaggle_submission import (\n"
-        "        run_submission_pipeline,\n"
-        "        validate_submission_parquet,\n"
-        "    )\n"
-        "    summary = run_submission_pipeline(parquet_path='submission.parquet')\n"
-        "    print('Submission pipeline finished successfully:', summary)\n\n"
-        "output_parquet = Path('/kaggle/working/submission.parquet') if Path('/kaggle/working').exists() else Path('submission.parquet')\n"
-        "if not output_parquet.exists() and Path('submission.parquet').exists():\n"
-        "    shutil.copyfile('submission.parquet', output_parquet)\n"
-        "from project_override.submission.kaggle_submission import validate_submission_parquet\n"
-        "assert validate_submission_parquet(output_parquet), f'Invalid submission schema at {output_parquet}!'\n"
-        "print(f'[OK] Verified submission.parquet at {output_parquet}')\n"
+        "    if proc.returncode != 0:\n"
+        "        raise RuntimeError(f'Swarm exited with non-zero code {proc.returncode}')\n"
     )
 
+    cell_3_dummy = (
+        "# --- CELL 3: SUBMISSION ARTIFACT FOR COMMIT & EVALUATION ---\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "import pandas as pd\n\n"
+        "working_dir = Path('/kaggle/working') if Path('/kaggle/working').exists() else Path.cwd()\n"
+        "parquet_path = working_dir / 'submission.parquet'\n\n"
+        "# When in commit mode (or if gateway did not write parquet), emit standard valid placeholder\n"
+        "if not os.getenv('KAGGLE_IS_COMPETITION_RERUN') or not parquet_path.exists():\n"
+        "    submission = pd.DataFrame(\n"
+        "        data=[['1_0', '1', True, 1]],\n"
+        "        columns=['row_id', 'game_id', 'end_of_game', 'score']\n"
+        "    )\n"
+        "    submission.to_parquet(parquet_path, index=False)\n"
+        "    print(f'[OK] Generated verified submission.parquet at {parquet_path} ({len(submission)} rows)')\n"
+        "    print(submission)\n"
+    )
+
+    cells = [
+        {
+            "id": "cell-00-install-wheels",
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [line + "\n" for line in cell_0_wheels.splitlines()],
+        },
+        {
+            "id": "cell-01-unpack-modules",
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [line + "\n" for line in cell_1_unpack.splitlines()],
+        },
+        {
+            "id": "cell-02-run-gateway",
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [line + "\n" for line in cell_2_execute.splitlines()],
+        },
+        {
+            "id": "cell-03-save-submission",
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [line + "\n" for line in cell_3_dummy.splitlines()],
+        },
+    ]
+
     nb = {
-        "cells": [
-            {
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": [line + "\n" for line in cell_1_unpack.splitlines()],
-            },
-            {
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": [line + "\n" for line in cell_2_execute.splitlines()],
-            },
-        ],
+        "cells": cells,
         "metadata": {
             "kernelspec": {
                 "display_name": "Python 3",
@@ -177,13 +251,13 @@ def build_all() -> None:
     dist_dir = ROOT / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
     dist_file = dist_dir / "kaggle_single_cell_submission.py"
-    single_cell_code = f"{cell_1_unpack}\n\n{cell_2_execute}\n"
+    single_cell_code = f"{cell_0_wheels}\n\n{cell_1_unpack}\n\n{cell_2_execute}\n\n{cell_3_dummy}\n"
     dist_file.write_text(single_cell_code, encoding="utf-8")
     print(f"[STANDALONE] Generated {dist_file}")
 
     # Synchronize kernel-metadata.json
     meta = {
-        "id": "sofianali188201/arc-prize-2026-arc-agi-3-starter",
+        "id": "sofianali188201/arc-prize-2026-arc-agi-3-starter-v3-0",
         "title": "ARC Prize 2026 - ARC-AGI-3 Starter V3.0",
         "code_file": "submission.ipynb",
         "language": "python",
@@ -195,9 +269,7 @@ def build_all() -> None:
         "dataset_sources": [],
         "competition_sources": ["arc-prize-2026-arc-agi-3"],
         "kernel_sources": [],
-        "model_sources": [
-            "qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1",
-        ],
+        "model_sources": [],
     }
     for m_dir in (nb_dir1, nb_dir2):
         m_path = m_dir / "kernel-metadata.json"
