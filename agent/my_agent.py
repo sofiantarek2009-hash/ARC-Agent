@@ -29,7 +29,7 @@ except ImportError:
         ACTION7 = 7
 
 class MyAgent(Agent):
-    """Official ARC-AGI-3-Agents / Kaggle-Starter ABI wrapper around GeneralAgent."""
+    """Official ARC-AGI-3-Agents / Kaggle-Starter ABI wrapper around GeneralAgent v5.0."""
     MAX_ACTIONS = 450
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -72,10 +72,10 @@ class MyAgent(Agent):
         if hasattr(action_obj, "is_complex") and action_obj.is_complex():
             action_obj.set_data({"x": int(payload.get("x", 32)), "y": int(payload.get("y", 32))})
             action_obj.reasoning = {
-                "agent": "project_override_v4",
+                "agent": "project_override_v5",
                 "x": payload.get("x", 32),
                 "y": payload.get("y", 32),
             }
         elif hasattr(action_obj, "is_simple") and action_obj.is_simple():
-            action_obj.reasoning = f"project_override_v4 selected ACTION{act_id}"
+            action_obj.reasoning = f"project_override_v5 selected ACTION{act_id}"
         return action_obj

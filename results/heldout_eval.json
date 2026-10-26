@@ -3,7 +3,7 @@
   "games_completed_without_crash": 10,
   "mean_score": 100.0,
   "levels_cleared": 50,
-  "total_runtime_s": 2.16,
+  "total_runtime_s": 2.192,
   "mean_actions_per_game": 54.0,
   "llm_loaded": false,
   "llm_fallback_rate": 1.0,
@@ -13,7 +13,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3082,
+      "runtime_s": 0.3099,
       "crashed": false,
       "failure_reason": ""
     },
@@ -22,7 +22,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3051,
+      "runtime_s": 0.3242,
       "crashed": false,
       "failure_reason": ""
     },
@@ -31,7 +31,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 8,
-      "runtime_s": 0.0085,
+      "runtime_s": 0.0086,
       "crashed": false,
       "failure_reason": ""
     },
@@ -40,7 +40,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1426,
+      "runtime_s": 0.1478,
       "crashed": false,
       "failure_reason": ""
     },
@@ -49,7 +49,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3093,
+      "runtime_s": 0.319,
       "crashed": false,
       "failure_reason": ""
     },
@@ -58,7 +58,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3107,
+      "runtime_s": 0.3075,
       "crashed": false,
       "failure_reason": ""
     },
@@ -67,7 +67,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3073,
+      "runtime_s": 0.3124,
       "crashed": false,
       "failure_reason": ""
     },
@@ -85,7 +85,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1445,
+      "runtime_s": 0.1436,
       "crashed": false,
       "failure_reason": ""
     },
@@ -94,7 +94,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3142,
+      "runtime_s": 0.3096,
       "crashed": false,
       "failure_reason": ""
     }

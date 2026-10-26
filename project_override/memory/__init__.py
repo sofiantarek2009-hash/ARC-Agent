@@ -8,6 +8,13 @@ from project_override.memory.hypothesis_store import (
     BayesianExplorationTracker,
     HypothesisStore,
 )
+from project_override.memory.lineage_dag import (
+    LineageDAG,
+    TelemetryVector,
+    GroundedReplayVerifier,
+    ReplayTransition,
+)
+from project_override.memory.semantic_compactor import SemanticMemoryCompactor
 
 __all__ = [
     "ActionLedger",
@@ -16,4 +23,9 @@ __all__ = [
     "pack_signature_64",
     "BayesianExplorationTracker",
     "HypothesisStore",
+    "LineageDAG",
+    "TelemetryVector",
+    "GroundedReplayVerifier",
+    "ReplayTransition",
+    "SemanticMemoryCompactor",
 ]

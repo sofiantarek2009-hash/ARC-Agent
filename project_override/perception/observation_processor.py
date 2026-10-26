@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
+from scipy.ndimage import label as scipy_label
+from scipy.optimize import linear_sum_assignment
 
 @dataclass
 class Entity:
@@ -9,35 +11,20 @@ class Entity:
     pixels: List[Tuple[int, int]]
     mass: int
     centroid: Tuple[float, float]
-    bbox: Tuple[int, int, int, int]
+    bbox: Tuple[int, int, int, int]  # (min_r, min_c, max_r, max_c)
 
     @property
     def shape_signature(self) -> Tuple[int, int, int, int]:
         r0, c0, r1, c1 = self.bbox
         return (self.color, self.mass, r1 - r0 + 1, c1 - c0 + 1)
 
-def hungarian_match(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
-    if cost_matrix.size == 0:
-        return []
-    n_rows, n_cols = cost_matrix.shape
-    pairs: List[Tuple[int, int]] = []
-    used_r: Set[int] = set()
-    used_c: Set[int] = set()
-    flat_indices = np.argsort(cost_matrix, axis=None)
-    for idx in flat_indices:
-        r = int(idx // n_cols)
-        c = int(idx % n_cols)
-        if r not in used_r and c not in used_c:
-            if cost_matrix[r, c] < 1e6:
-                pairs.append((r, c))
-                used_r.add(r)
-                used_c.add(c)
-                if len(used_r) == n_rows or len(used_c) == n_cols:
-                    break
-    return pairs
 
 class DynamicHUDMasker:
-    """Infers HUD/status regions purely from statistical change frequency along borders."""
+    """Infers HUD/status regions purely from statistical change frequency along borders.
+    
+    Dynamically identifies border rows/columns that oscillate on every step (e.g. countdown
+    timers, action counters) without assuming a fixed 4px bezel.
+    """
     def __init__(self, shape: Tuple[int, int] = (64, 64), enabled: bool = True):
         self.shape = shape
         self.enabled = enabled
@@ -58,35 +45,40 @@ class DynamicHUDMasker:
         if 0 < changed_px <= 160:
             self.total_transitions += 1
             self.change_counts[diff] += 1
-            if self.total_transitions >= 1:
+            if self.total_transitions >= 2:
                 h, w = self.shape
+                # Perimeter candidate zone: only outermost 4 lines
                 border_zone = np.zeros((h, w), dtype=bool)
-                border_zone[:6, :] = True
-                border_zone[h - 6 :, :] = True
-                border_zone[:, :6] = True
-                border_zone[:, w - 6 :] = True
-                high_freq = self.change_counts >= 1
-                row_ticks = np.sum(border_zone & high_freq, axis=1)
-                col_ticks = np.sum(border_zone & high_freq, axis=0)
-                mask = border_zone & (
-                    self.change_counts >= max(2, int(0.60 * self.total_transitions))
-                )
+                border_zone[:4, :] = True
+                border_zone[h - 4 :, :] = True
+                border_zone[:, :4] = True
+                border_zone[:, w - 4 :] = True
+                
+                # Cells that change frequently (>60% of transitions)
+                high_freq = border_zone & (self.change_counts >= max(2, int(0.60 * self.total_transitions)))
+                row_ticks = np.sum(high_freq, axis=1)
+                col_ticks = np.sum(high_freq, axis=0)
+                
+                mask = np.zeros((h, w), dtype=bool)
                 for r in range(h):
-                    if (r < 6 or r >= h - 6) and row_ticks[r] >= 3:
+                    if (r < 4 or r >= h - 4) and row_ticks[r] >= 4:
                         mask[r, :] = True
                 for c in range(w):
-                    if (c < 6 or c >= w - 6) and col_ticks[c] >= 3:
+                    if (c < 4 or c >= w - 4) and col_ticks[c] >= 4:
                         mask[:, c] = True
                 self.hud_mask = mask
 
     def mask_grid(self, grid: np.ndarray) -> np.ndarray:
         arr = np.asarray(grid, dtype=np.int8).copy()
         if self.enabled and arr.shape == self.hud_mask.shape and np.any(self.hud_mask):
-            arr[self.hud_mask] = 0
+            arr[self.hud_mask] = -1  # Masked HUD indicator
         return arr
 
+
 class ObservationProcessor:
-    """Normalizes grids, segments connected objects, and extracts subframe kinematics."""
+    """Normalizes grids, segments connected objects via scipy CCL, tracks entities via Hungarian
+    matching, and extracts accurate transition kinematics without fixed coordinate assumptions.
+    """
     def __init__(self, enable_hud_masking: bool = True) -> None:
         self.hud_masker = DynamicHUDMasker(enabled=enable_hud_masking)
 
@@ -97,184 +89,203 @@ class ObservationProcessor:
             arr = np.asarray(raw_frame.frame)
         elif hasattr(raw_frame, "data"):
             arr = np.asarray(raw_frame.data)
-        else:
+        elif isinstance(raw_frame, list):
             arr = np.asarray(raw_frame)
-        if arr.ndim == 3 and arr.shape[0] >= 1:
-            arr = arr[-1]
-        if arr.ndim != 2:
+        else:
             arr = np.zeros((64, 64), dtype=np.int8)
+
+        # Handle 3D tensors: (1, 64, 64) -> (64, 64) or (64, 64, 1) -> (64, 64)
+        if arr.ndim == 3:
+            if arr.shape[0] == 1:
+                arr = arr[0]
+            elif arr.shape[-1] in (1, 3, 4):
+                arr = arr[..., 0]
+            else:
+                arr = arr[-1]
+
         return np.asarray(arr, dtype=np.int8)
 
-    def extract_animation_sequence(self, raw_frame: Any) -> List[np.ndarray]:
-        frames_list: List[np.ndarray] = []
-        raw_seq = None
-        for attr in ("frame", "data", "frames", "grids"):
-            if hasattr(raw_frame, attr):
-                raw_seq = getattr(raw_frame, attr)
-                break
-        if raw_seq is None:
-            raw_seq = raw_frame
-        arr = np.asarray(raw_seq)
-        if arr.ndim == 3:
-            for i in range(arr.shape[0]):
-                frames_list.append(np.asarray(arr[i], dtype=np.int8))
-        elif arr.ndim == 2:
-            frames_list.append(np.asarray(arr, dtype=np.int8))
-        if not frames_list:
-            frames_list.append(np.zeros((64, 64), dtype=np.int8))
-        return frames_list
+    def extract_animation_sequence(self, raw_obs: Any) -> List[np.ndarray]:
+        frames: List[np.ndarray] = []
+        if hasattr(raw_obs, "animation_sequence") and raw_obs.animation_sequence:
+            for f in raw_obs.animation_sequence:
+                frames.append(self.normalize_grid(f))
+        elif hasattr(raw_obs, "frame"):
+            raw_arr = np.asarray(raw_obs.frame)
+            if raw_arr.ndim == 3 and raw_arr.shape[0] > 1:
+                for idx in range(raw_arr.shape[0]):
+                    frames.append(self.normalize_grid(raw_arr[idx]))
+            else:
+                frames.append(self.normalize_grid(raw_arr))
+        if not frames:
+            frames.append(self.normalize_grid(raw_obs))
+        return frames
 
-    def induce_background_color(
+    def induce_canvas_and_floor(
         self, grid: np.ndarray, learned_floor_color: Optional[int] = None
-    ) -> int:
+    ) -> Tuple[int, Optional[int]]:
+        """Determines canvas background and floor color dynamically.
+        Perimeter boundary mode is canvas_bg; most frequent non-canvas color is floor.
+        """
+        h, w = grid.shape
+        perimeter_cells = np.concatenate([
+            grid[0, :], grid[h - 1, :], grid[:, 0], grid[:, w - 1]
+        ])
+        vals, counts = np.unique(perimeter_cells, return_counts=True)
+        canvas_bg = int(vals[np.argmax(counts)])
+
         if learned_floor_color is not None:
-            return int(learned_floor_color)
-        arr = np.asarray(grid, dtype=np.int8)
-        vals, counts = np.unique(arr, return_counts=True)
-        return int(vals[int(np.argmax(counts))]) if len(vals) > 0 else 0
+            return canvas_bg, learned_floor_color
+
+        interior = grid[2:h-2, 2:w-2] if h > 8 and w > 8 else grid
+        int_vals, int_counts = np.unique(interior, return_counts=True)
+        floor_color: Optional[int] = None
+        for v, cnt in sorted(zip(int_vals, int_counts), key=lambda x: -x[1]):
+            val = int(v)
+            if val != canvas_bg and cnt >= (interior.size * 0.15):
+                floor_color = val
+                break
+        return canvas_bg, floor_color
 
     def extract_entities(
-        self,
-        grid: np.ndarray,
-        bg_color: Optional[int] = None,
-        apply_hud_mask: bool = True,
+        self, grid: np.ndarray, bg_color: int, floor_color: Optional[int] = None
     ) -> List[Entity]:
-        arr = self.hud_masker.mask_grid(grid) if apply_hud_mask else np.asarray(grid, dtype=np.int8)
-        h, w = arr.shape
-        if bg_color is None:
-            bg_color = self.induce_background_color(arr)
-        visited = np.zeros((h, w), dtype=bool)
-        if apply_hud_mask and self.hud_masker.enabled and self.hud_masker.hud_mask.shape == (h, w):
-            visited |= self.hud_masker.hud_mask
+        """Segments connected components using scipy.ndimage.label per color."""
         entities: List[Entity] = []
-        ent_id = 0
-        for r in range(h):
-            for c in range(w):
-                if visited[r, c] or int(arr[r, c]) == bg_color:
+        entity_id = 0
+        h, w = grid.shape
+        unique_colors = np.unique(grid)
+        
+        # 4-connectivity structure
+        struct = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
+
+        for col in unique_colors:
+            c = int(col)
+            if c == bg_color or (floor_color is not None and c == floor_color) or c < 0:
+                continue
+            color_mask = (grid == c)
+            labeled_arr, num_features = scipy_label(color_mask, structure=struct)
+            for feat_idx in range(1, num_features + 1):
+                feat_coords = np.argwhere(labeled_arr == feat_idx)
+                if len(feat_coords) == 0:
                     continue
-                color = int(arr[r, c])
-                stack = [(r, c)]
-                visited[r, c] = True
-                pixels: List[Tuple[int, int]] = []
-                r_min = r_max = r
-                c_min = c_max = c
-                while stack:
-                    cr, cc = stack.pop()
-                    pixels.append((cr, cc))
-                    if cr < r_min:
-                        r_min = cr
-                    if cr > r_max:
-                        r_max = cr
-                    if cc < c_min:
-                        c_min = cc
-                    if cc > c_max:
-                        c_max = cc
-                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                        nr, nc = cr + dr, cc + dc
-                        if (
-                            0 <= nr < h
-                            and 0 <= nc < w
-                            and not visited[nr, nc]
-                            and int(arr[nr, nc]) == color
-                        ):
-                            visited[nr, nc] = True
-                            stack.append((nr, nc))
-                mass = len(pixels)
-                mean_r = sum(p[0] for p in pixels) / float(mass)
-                mean_c = sum(p[1] for p in pixels) / float(mass)
+                pixels = [(int(r), int(c_coord)) for r, c_coord in feat_coords]
+                min_r, min_c = int(np.min(feat_coords[:, 0])), int(np.min(feat_coords[:, 1]))
+                max_r, max_c = int(np.max(feat_coords[:, 0])), int(np.max(feat_coords[:, 1]))
+                centroid = (float(np.mean(feat_coords[:, 0])), float(np.mean(feat_coords[:, 1])))
                 entities.append(
                     Entity(
-                        id=ent_id,
-                        color=color,
+                        id=entity_id,
+                        color=c,
                         pixels=pixels,
-                        mass=mass,
-                        centroid=(mean_r, mean_c),
-                        bbox=(r_min, c_min, r_max, c_max),
+                        mass=len(pixels),
+                        centroid=centroid,
+                        bbox=(min_r, min_c, max_r, max_c),
                     )
                 )
-                ent_id += 1
+                entity_id += 1
         return entities
 
     def track_entities(
         self, prev_entities: List[Entity], curr_entities: List[Entity]
     ) -> List[Tuple[Entity, Entity, Tuple[float, float]]]:
+        """Optimal Hungarian tracking of entities between frames using scipy linear_sum_assignment."""
         if not prev_entities or not curr_entities:
             return []
-        cost = np.full((len(prev_entities), len(curr_entities)), 1e7, dtype=np.float64)
+        n_prev, n_curr = len(prev_entities), len(curr_entities)
+        cost = np.zeros((n_prev, n_curr), dtype=np.float64)
+
         for i, pe in enumerate(prev_entities):
             for j, ce in enumerate(curr_entities):
-                if pe.color == ce.color and abs(pe.mass - ce.mass) <= max(2, int(0.25 * pe.mass)):
-                    dist = abs(pe.centroid[0] - ce.centroid[0]) + abs(
-                        pe.centroid[1] - ce.centroid[1]
-                    )
-                    if dist <= 24.0:
-                        cost[i, j] = dist + abs(pe.mass - ce.mass) * 2.0
-        matches = hungarian_match(cost)
+                dr = ce.centroid[0] - pe.centroid[0]
+                dc = ce.centroid[1] - pe.centroid[1]
+                dist = np.sqrt(dr * dr + dc * dc)
+                # Penalize color mismatch heavily
+                color_penalty = 0.0 if pe.color == ce.color else 500.0
+                mass_diff = abs(pe.mass - ce.mass)
+                cost[i, j] = dist + color_penalty + (mass_diff * 2.0)
+
+        row_ind, col_ind = linear_sum_assignment(cost)
         tracked: List[Tuple[Entity, Entity, Tuple[float, float]]] = []
-        for r_idx, c_idx in matches:
-            pe = prev_entities[r_idx]
-            ce = curr_entities[c_idx]
-            dr = ce.centroid[0] - pe.centroid[0]
-            dc = ce.centroid[1] - pe.centroid[1]
-            if abs(dr) > 0.1 or abs(dc) > 0.1:
-                tracked.append((pe, ce, (dr, dc)))
+        for r_idx, c_idx in zip(row_ind, col_ind):
+            if cost[r_idx, c_idx] < 200.0:  # Matches must have compatible color/shape
+                pe = prev_entities[r_idx]
+                ce = curr_entities[c_idx]
+                dr = ce.centroid[0] - pe.centroid[0]
+                dc = ce.centroid[1] - pe.centroid[1]
+                if abs(dr) > 0.05 or abs(dc) > 0.05:
+                    tracked.append((pe, ce, (dr, dc)))
         return tracked
 
-    def extract_subframe_kinematics(
-        self, prev_grid: np.ndarray, anim_frames: List[np.ndarray], bg_color: int
-    ) -> List[Tuple[Entity, Entity, Tuple[float, float]]]:
-        """Kepler sp80 visual lesson: extracts first-subframe impulse vector when multi-frame animations occur."""
-        if not anim_frames:
-            return []
-        prev_ents = self.extract_entities(prev_grid, bg_color=bg_color)
-        first_ents = self.extract_entities(anim_frames[0], bg_color=bg_color)
-        tracked_first = self.track_entities(prev_ents, first_ents)
-        if tracked_first or len(anim_frames) == 1:
-            return tracked_first
-        last_ents = self.extract_entities(anim_frames[-1], bg_color=bg_color)
-        return self.track_entities(prev_ents, last_ents)
+    def compute_delta_omega(self, pre_grid: np.ndarray, post_grid: np.ndarray) -> int:
+        p0 = self.hud_masker.mask_grid(pre_grid)
+        p1 = self.hud_masker.mask_grid(post_grid)
+        return int(np.sum(p0 != p1))
 
-    def compute_delta_omega(self, prev_grid: np.ndarray, curr_grid: np.ndarray) -> int:
-        a = np.asarray(prev_grid, dtype=np.int8)
-        b = np.asarray(curr_grid, dtype=np.int8)
-        if a.shape != b.shape:
-            return 0
-        diff = a != b
-        if self.hud_masker.enabled and self.hud_masker.hud_mask.shape == diff.shape:
-            diff = diff & (~self.hud_masker.hud_mask)
-        return int(np.sum(diff))
+    def extract_transition_kinematics(
+        self, pre_grid: np.ndarray, post_grid: np.ndarray
+    ) -> Optional[Dict[str, Any]]:
+        """Extracts the avatar displacement vector directly from individual entity displacement
+        rather than pooling vacated/occupied pixels together, avoiding the Inverted Compass bug.
+        """
+        bg_color, floor_color = self.induce_canvas_and_floor(pre_grid)
+        prev_ents = self.extract_entities(pre_grid, bg_color, floor_color)
+        curr_ents = self.extract_entities(post_grid, bg_color, floor_color)
+        
+        tracked = self.track_entities(prev_ents, curr_ents)
+        if not tracked:
+            return None
+
+        # Sort tracked moving entities by mass (avatar is typically a small, invariant entity)
+        moving = [(pe, ce, vec) for pe, ce, vec in tracked if max(abs(vec[0]), abs(vec[1])) >= 0.5]
+        if not moving:
+            return None
+
+        # Pick the most plausible avatar mover (smallest consistent entity or primary mover)
+        moving.sort(key=lambda x: x[0].mass)
+        pe, ce, (dr, dc) = moving[0]
+        int_dr = int(round(dr))
+        int_dc = int(round(dc))
+        stride = max(abs(int_dr), abs(int_dc))
+
+        return {
+            "floor_color": floor_color if floor_color is not None else bg_color,
+            "avatar_colors": {pe.color},
+            "avatar_color_counts": {pe.color: pe.mass},
+            "vector": (int_dr, int_dc),
+            "stride": stride,
+            "avatar_centroid": (round(ce.centroid[0], 1), round(ce.centroid[1], 1)),
+            "half_w": max(1, (ce.bbox[2] - ce.bbox[0]) // 2),
+        }
 
     def summarize_transition(
-        self,
-        prev_grid: np.ndarray,
-        curr_grid: np.ndarray,
-        anim_frames: Optional[List[np.ndarray]] = None,
+        self, pre_grid: np.ndarray, post_grid: np.ndarray, anim_frames: List[np.ndarray]
     ) -> str:
-        f0 = np.asarray(prev_grid, dtype=np.int8)
-        f1 = np.asarray(curr_grid, dtype=np.int8)
-        if f0.shape != f1.shape:
-            return "SHAPE_CHANGED"
-        diff = f0 != f1
-        if self.hud_masker.enabled and self.hud_masker.hud_mask.shape == diff.shape:
-            diff = diff & (~self.hud_masker.hud_mask)
-        rs, cs = np.where(diff)
-        if len(rs) == 0:
-            return "NO_INTERIOR_CHANGE"
-        samples = []
-        for idx in range(min(8, len(rs))):
-            r, c = int(rs[idx]), int(cs[idx])
-            samples.append(f"({r},{c}):{int(f0[r, c])}->{int(f1[r, c])}")
-        anim_note = f" anim_len={len(anim_frames)}" if anim_frames and len(anim_frames) > 1 else ""
-        return f"changed_px={len(rs)}{anim_note} [" + ", ".join(samples) + "]"
+        delta = self.compute_delta_omega(pre_grid, post_grid)
+        if delta == 0:
+            return "NO_OP"
+        kin = self.extract_transition_kinematics(pre_grid, post_grid)
+        if kin and kin["vector"] != (0, 0):
+            dr, dc = kin["vector"]
+            return f"MOVED({dr:+d},{dc:+d})_px{delta}"
+        return f"DIFF_px{delta}"
 
-    def encode_compact_observation(self, grid: np.ndarray, max_entities: int = 24) -> str:
-        bg = self.induce_background_color(grid)
-        ents = self.extract_entities(grid, bg_color=bg)
-        ents_sorted = sorted(ents, key=lambda e: (e.mass, e.color))[:max_entities]
-        vals, counts = np.unique(grid, return_counts=True)
-        palette_str = ", ".join(f"c{int(v)}:{int(cnt)}" for v, cnt in zip(vals, counts))
-        ent_parts = [
-            f"O{e.id}(c={e.color},m={e.mass},rc=({int(round(e.centroid[0]))},{int(round(e.centroid[1]))}),box={e.bbox})"
-            for e in ents_sorted
-        ]
-        return f"bg={bg} | palette=[{palette_str}] | objects({len(ents)}): " + "; ".join(ent_parts)
+    def encode_compact_observation(self, grid: np.ndarray) -> str:
+        """Encodes grid into compact symbolic summary for LLM prompt context."""
+        h, w = grid.shape
+        bg_col, floor_col = self.induce_canvas_and_floor(grid)
+        ents = self.extract_entities(grid, bg_col, floor_col)
+        
+        lines = [f"GRID_SHAPE: {h}x{w} | BG_COLOR: {bg_col} | FLOOR_COLOR: {floor_col}"]
+        lines.append(f"TOTAL_ENTITIES: {len(ents)}")
+        # Group entities by color
+        by_col: Dict[int, List[Entity]] = {}
+        for e in ents:
+            by_col.setdefault(e.color, []).append(e)
+            
+        for col, col_ents in sorted(by_col.items()):
+            centroids = [f"({e.centroid[0]:.1f},{e.centroid[1]:.1f})" for e in col_ents[:6]]
+            extra = f"...+{len(col_ents)-6}" if len(col_ents) > 6 else ""
+            lines.append(f"  Color {col} (cnt={len(col_ents)}, mass={col_ents[0].mass}): {', '.join(centroids)}{extra}")
+            
+        return "\n".join(lines)

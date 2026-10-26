@@ -3,7 +3,7 @@
   "games_completed_without_crash": 25,
   "mean_score": 100.0,
   "levels_cleared": 125,
-  "total_runtime_s": 5.451,
+  "total_runtime_s": 5.554,
   "mean_actions_per_game": 54.0,
   "llm_loaded": false,
   "llm_fallback_rate": 1.0,
@@ -13,7 +13,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3126,
+      "runtime_s": 0.3405,
       "crashed": false,
       "failure_reason": ""
     },
@@ -22,7 +22,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3069,
+      "runtime_s": 0.3267,
       "crashed": false,
       "failure_reason": ""
     },
@@ -40,7 +40,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1457,
+      "runtime_s": 0.146,
       "crashed": false,
       "failure_reason": ""
     },
@@ -49,7 +49,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3108,
+      "runtime_s": 0.3121,
       "crashed": false,
       "failure_reason": ""
     },
@@ -58,7 +58,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.327,
+      "runtime_s": 0.3104,
       "crashed": false,
       "failure_reason": ""
     },
@@ -67,7 +67,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3046,
+      "runtime_s": 0.3556,
       "crashed": false,
       "failure_reason": ""
     },
@@ -76,7 +76,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 8,
-      "runtime_s": 0.0085,
+      "runtime_s": 0.0088,
       "crashed": false,
       "failure_reason": ""
     },
@@ -85,7 +85,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1496,
+      "runtime_s": 0.1465,
       "crashed": false,
       "failure_reason": ""
     },
@@ -94,7 +94,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3317,
+      "runtime_s": 0.313,
       "crashed": false,
       "failure_reason": ""
     },
@@ -103,7 +103,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3062,
+      "runtime_s": 0.3164,
       "crashed": false,
       "failure_reason": ""
     },
@@ -112,7 +112,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3181,
+      "runtime_s": 0.313,
       "crashed": false,
       "failure_reason": ""
     },
@@ -121,7 +121,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 8,
-      "runtime_s": 0.0086,
+      "runtime_s": 0.0085,
       "crashed": false,
       "failure_reason": ""
     },
@@ -130,7 +130,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1457,
+      "runtime_s": 0.1455,
       "crashed": false,
       "failure_reason": ""
     },
@@ -139,7 +139,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3081,
+      "runtime_s": 0.3207,
       "crashed": false,
       "failure_reason": ""
     },
@@ -148,7 +148,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3057,
+      "runtime_s": 0.313,
       "crashed": false,
       "failure_reason": ""
     },
@@ -157,7 +157,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3076,
+      "runtime_s": 0.3098,
       "crashed": false,
       "failure_reason": ""
     },
@@ -166,7 +166,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 8,
-      "runtime_s": 0.0084,
+      "runtime_s": 0.0086,
       "crashed": false,
       "failure_reason": ""
     },
@@ -175,7 +175,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1426,
+      "runtime_s": 0.1463,
       "crashed": false,
       "failure_reason": ""
     },
@@ -184,7 +184,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3099,
+      "runtime_s": 0.3136,
       "crashed": false,
       "failure_reason": ""
     },
@@ -193,7 +193,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3083,
+      "runtime_s": 0.3157,
       "crashed": false,
       "failure_reason": ""
     },
@@ -202,7 +202,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 69,
-      "runtime_s": 0.3101,
+      "runtime_s": 0.3104,
       "crashed": false,
       "failure_reason": ""
     },
@@ -220,7 +220,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 44,
-      "runtime_s": 0.1486,
+      "runtime_s": 0.144,
       "crashed": false,
       "failure_reason": ""
     },
@@ -229,7 +229,7 @@
       "score": 100.0,
       "levels_cleared": 5,
       "actions": 80,
-      "runtime_s": 0.3068,
+      "runtime_s": 0.31,
       "crashed": false,
       "failure_reason": ""
     }

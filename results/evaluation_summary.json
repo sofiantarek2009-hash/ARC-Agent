@@ -1,0 +1,237 @@
+{
+  "games_attempted": 25,
+  "games_completed_without_crash": 25,
+  "mean_score": 0.0,
+  "levels_cleared": 0,
+  "total_runtime_s": 14.33,
+  "mean_actions_per_game": 110.4,
+  "llm_loaded": false,
+  "llm_fallback_rate": 1.0,
+  "per_game": [
+    {
+      "game_id": "ar25",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.288,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "bp35",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 0,
+      "runtime_s": 0.019,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "cd82",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.47,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "cn04",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.255,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "dc22",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.963,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "ft09",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.77,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "g50t",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.314,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "ka59",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.319,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "lf52",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 0,
+      "runtime_s": 0.024,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "lp85",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.61,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "ls20",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.587,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "m0r0",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.448,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "r11l",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.658,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "re86",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.555,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "s5i5",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.715,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sb26",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.418,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sc25",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.585,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sk48",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.62,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "sp80",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.372,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "su15",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.534,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "tn36",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.388,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "tr87",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 1.645,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "tu93",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 1.737,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "vc33",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.331,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "wa30",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 120,
+      "runtime_s": 0.323,
+      "crashed": false,
+      "failure_reason": ""
+    }
+  ]
+}

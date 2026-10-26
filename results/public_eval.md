@@ -6,5 +6,5 @@
 - Dev Split Score (15 games): 100.0%
 - Held-Out Split Score (10 games): 100.0%
 - Total Levels Cleared: 125
-- Total Runtime (s): 5.451
+- Total Runtime (s): 5.554
 - LLM Fallback Rate: 1.0

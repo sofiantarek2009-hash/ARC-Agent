@@ -74,6 +74,7 @@ def astar_grid(
     grid_shape: Tuple[int, int] = (64, 64),
     portals: Optional[Dict[Tuple[int, int], Tuple[int, int]]] = None,
     max_expansions: int = 2500,
+    half_w: int = 0,
 ) -> Optional[List[int]]:
     if not action_vectors:
         return None
@@ -84,7 +85,8 @@ def astar_grid(
         if (dr, dc) != (0, 0)
     ]
     s = max(1, min(strides)) if strides else 1
-    if abs(start[0] - target[0]) < s and abs(start[1] - target[1]) < s:
+    tolerance = half_w
+    if abs(start[0] - target[0]) <= tolerance and abs(start[1] - target[1]) <= tolerance:
         return []
 
     def heuristic(pos: Tuple[int, int]) -> float:
@@ -101,6 +103,20 @@ def astar_grid(
                     d_direct = d_portal + 1.0
         return d_direct
 
+    def is_footprint_clear(r: int, c: int) -> bool:
+        if half_w <= 0:
+            is_target_cell = abs(r - target[0]) <= tolerance and abs(c - target[1]) <= tolerance
+            return (r, c) not in walls or is_target_cell
+        for dr_w in range(-half_w, half_w + 1):
+            for dc_w in range(-half_w, half_w + 1):
+                mr, mc = r + dr_w, c + dc_w
+                if not (0 <= mr < h and 0 <= mc < w):
+                    return False
+                is_target_cell = abs(mr - target[0]) <= tolerance and abs(mc - target[1]) <= tolerance
+                if (mr, mc) in walls and not is_target_cell:
+                    return False
+        return True
+
     open_heap: List[Tuple[float, int, Tuple[int, int], List[int]]] = [
         (heuristic(start), 0, start, [])
     ]
@@ -109,30 +125,20 @@ def astar_grid(
     while open_heap and expansions < max_expansions:
         _, g, curr, path = heapq.heappop(open_heap)
         expansions += 1
-        if abs(curr[0] - target[0]) < s and abs(curr[1] - target[1]) < s:
+        if abs(curr[0] - target[0]) <= tolerance and abs(curr[1] - target[1]) <= tolerance:
             return path
         for act_id, (dr, dc) in action_vectors.items():
             if dr == 0 and dc == 0:
                 continue
             nr, nc = curr[0] + dr, curr[1] + dc
-            if not (0 <= nr < h and 0 <= nc < w):
+            if not (half_w <= nr < h - half_w and half_w <= nc < w - half_w):
                 continue
-            steps_n = max(1, max(abs(dr), abs(dc)))
-            blocked = False
-            for k in range(1, steps_n + 1):
-                mr = int(round(curr[0] + (dr * k) / steps_n))
-                mc = int(round(curr[1] + (dc * k) / steps_n))
-                mid = (mr, mc)
-                is_target_cell = abs(mid[0] - target[0]) < s and abs(mid[1] - target[1]) < s
-                if mid in walls and not is_target_cell:
-                    blocked = True
-                    break
-            if blocked:
+            if not is_footprint_clear(nr, nc):
                 continue
             nxt = (nr, nc)
             if portals:
                 for p_in, p_out in portals.items():
-                    if abs(nxt[0] - p_in[0]) < s and abs(nxt[1] - p_in[1]) < s:
+                    if abs(nxt[0] - p_in[0]) <= tolerance and abs(nxt[1] - p_in[1]) <= tolerance:
                         nxt = p_out
                         break
             new_g = g + 1
@@ -361,23 +367,44 @@ class EmpiricalWorldModel:
         return None
 
     def infer_obstacle_cells(
-        self, grid: np.ndarray, entities: List[Entity], known_walls: Set[Tuple[int, int]]
+        self,
+        grid: np.ndarray,
+        entities: List[Entity],
+        known_walls: Set[Tuple[int, int]],
+        canvas_bg: Optional[int] = None,
+        floor_color: Optional[int] = None,
     ) -> Set[Tuple[int, int]]:
         obs_cells: Set[Tuple[int, int]] = set(known_walls)
-        for e in entities:
-            r0, c0, r1, c1 = e.bbox
-            h_box = r1 - r0 + 1
-            w_box = c1 - c0 + 1
-            is_elongated_barrier = e.mass >= 4 and (
-                h_box >= 3 * w_box or w_box >= 3 * h_box or e.mass >= 6
-            )
-            if (
-                e.color in self.hypotheses.wall_colors
-                or e.color in self.hypotheses.hazard_colors
-                or is_elongated_barrier
-            ):
-                for pr, pc in e.pixels:
-                    obs_cells.add((pr, pc))
+        h, w = grid.shape
+        if floor_color is not None:
+            for r in range(h):
+                for c in range(w):
+                    val = int(grid[r, c])
+                    if val != floor_color and val not in self.hypotheses.avatar_colors:
+                        obs_cells.add((r, c))
+            for e in entities:
+                if (
+                    1 <= e.mass <= 120
+                    and e.color not in self.hypotheses.wall_colors
+                    and e.color not in self.hypotheses.hazard_colors
+                ):
+                    for pr, pc in e.pixels:
+                        obs_cells.discard((pr, pc))
+        else:
+            if canvas_bg is not None:
+                for r in range(h):
+                    for c in range(w):
+                        if int(grid[r, c]) == canvas_bg:
+                            obs_cells.add((r, c))
+            for e in entities:
+                if e.color in self.hypotheses.avatar_colors:
+                    continue
+                if (
+                    e.color in self.hypotheses.wall_colors
+                    or e.color in self.hypotheses.hazard_colors
+                ):
+                    for pr, pc in e.pixels:
+                        obs_cells.add((pr, pc))
         return obs_cells
 
     def plan_interactive_route(
@@ -390,26 +417,40 @@ class EmpiricalWorldModel:
         enable_sokoban: bool = True,
         enable_2d_sokoban: bool = True,
         enable_orthogonal: bool = True,
+        half_w: int = 0,
     ) -> Optional[List[int]]:
         eff_vecs = self.hypotheses.get_effective_vectors(enable_orthogonal=enable_orthogonal)
         if not eff_vecs:
             return None
         av_colors = self.hypotheses.avatar_colors
-        effective_walls = self.infer_obstacle_cells(grid, entities, walls)
+        canvas_bg = getattr(self.hypotheses, "canvas_bg", None)
+        floor_color = getattr(self.hypotheses, "floor_color", None)
+        effective_walls = self.infer_obstacle_cells(
+            grid, entities, walls, canvas_bg=canvas_bg, floor_color=floor_color
+        )
 
         all_interactive: List[Entity] = []
         candidates: List[Entity] = []
         for e in entities:
             rc = (int(round(e.centroid[0])), int(round(e.centroid[1])))
-            if rc == av_pos or rc in effective_walls:
+            if rc == av_pos:
+                continue
+            if floor_color is not None and e.color == floor_color:
+                continue
+            if canvas_bg is not None and e.color == canvas_bg:
                 continue
             if e.color in self.hypotheses.wall_colors or e.color in self.hypotheses.hazard_colors:
                 continue
-            if e.color in av_colors and e.mass <= 4:
+            if e.color in av_colors:
                 continue
-            if 1 <= e.mass <= 36:
+            if 1 <= e.mass <= 120:
                 all_interactive.append(e)
-                if rc not in visited_centers or e.color in self.hypotheses.pushable_colors:
+                already_visited = any(
+                    abs(rc[0] - vr) <= max(1, half_w) and abs(rc[1] - vc) <= max(1, half_w)
+                    for vr, vc in visited_centers
+                )
+                is_goal = e.color in self.hypotheses.goal_colors
+                if (not already_visited or is_goal or e.color in self.hypotheses.pushable_colors):
                     candidates.append(e)
 
         if enable_sokoban and len(all_interactive) >= 2:
@@ -472,6 +513,7 @@ class EmpiricalWorldModel:
                                 eff_vecs,
                                 grid.shape,
                                 portals=self.hypotheses.portal_map,
+                                half_w=half_w,
                             )
                             if path_to_stand is not None:
                                 return path_to_stand + ([int(act_id)] * n_pushes)
@@ -479,27 +521,43 @@ class EmpiricalWorldModel:
         if not candidates:
             return None
 
-        def _target_key(ent: Entity) -> Tuple[float, float]:
+        has_small_items = any(
+            e.mass <= 10 and not (e.color in self.hypotheses.goal_colors)
+            for e in candidates
+        )
+
+        def _target_key(ent: Entity) -> Tuple[int, float, float, int]:
             rc = (int(round(ent.centroid[0])), int(round(ent.centroid[1])))
             dist = abs(rc[0] - av_pos[0]) + abs(rc[1] - av_pos[1])
+            is_goal = ent.color in self.hypotheses.goal_colors
             prio = self.hypotheses.bayesian_tracker.exploration_priority(ent.shape_signature, 1)
-            if ent.color in self.hypotheses.goal_colors or ent.color in self.hypotheses.switch_colors:
-                prio += 0.5
-            return (-round(prio, 2), float(dist))
+            if has_small_items:
+                goal_score = 10 if is_goal else (0 if ent.mass <= 10 else 5)
+            else:
+                goal_score = -10 if is_goal else 0
+            mass_bonus = 1.0 if ent.mass <= 10 else 0.0
+            return (goal_score, -round(prio + mass_bonus, 2), float(dist), ent.mass)
 
         candidates.sort(key=_target_key)
 
-        for ent in candidates[:6]:
+        for ent in candidates[:8]:
             target_rc = (int(round(ent.centroid[0])), int(round(ent.centroid[1])))
+            target_walls = set(effective_walls)
+            for pr, pc in ent.pixels:
+                target_walls.discard((pr, pc))
+            for dr in range(-half_w, half_w + 1):
+                for dc in range(-half_w, half_w + 1):
+                    target_walls.discard((target_rc[0] + dr, target_rc[1] + dc))
             path = astar_grid(
                 av_pos,
                 target_rc,
-                effective_walls,
+                target_walls,
                 eff_vecs,
                 grid.shape,
                 portals=self.hypotheses.portal_map,
+                half_w=half_w,
             )
-            if path:
+            if path is not None:
                 return path
         return None
 

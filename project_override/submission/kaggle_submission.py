@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from project_override.config import AgentConfig
-from project_override.llm.local_runtime import LocalLLMRuntime
+from project_override.llm.codeact_engine import OfflineServerManager
 from project_override.orchestration.general_agent import GeneralAgent
 
 logger = logging.getLogger(__name__)
@@ -147,185 +147,6 @@ def _extract_available_action_ids(obs: Any, env: Any) -> List[int]:
                     avail.append(int(name[6:]))
     return avail or [1, 2, 3, 4, 5, 6]
 
-class _LocalMultiLevelARC3Env:
-    """
-    Genuine, deterministic 64x64 multi-level interactive ARC-AGI-3 environment
-    used when the external `arc_agi` C/Rust wheel is not installed locally.
-    Covers 5 core ARC-AGI-3 mechanic families across 5 levels per game (25 games = 125 levels):
-    - Family 0: Obstacle navigation + ticking border HUD timer (tests HUD masking + A* world model)
-    - Family 1: Switch-gate unlocking + goal navigation (tests Bayesian exploration + wall clearing)
-    - Family 2: Tile color-cycling pattern matching via ACTION6 (tests click pattern solver & Reki pruning)
-    - Family 3: Sokoban block-pushing onto receptor, including non-collinear 2D pushes on deeper levels
-    - Family 4: Trap/Dead-end navigation requiring ACTION7 Undo (tests AVO supervisor & Undo backtracking)
-    """
-    def __init__(self, game_idx: int):
-        self.game_idx = int(game_idx) % 25
-        self.family = self.game_idx % 5
-        self.variant = (self.game_idx // 5) % 5
-        self.num_levels = 5
-        self.human_baselines = [12, 14, 16, 18, 22]
-        self.level_idx = 0
-        self.steps_in_level = 0
-        self.level_actions_recorded: List[Optional[int]] = [None] * self.num_levels
-        self.state = "PLAYING"
-        self.levels_completed = 0
-        self.history_stack: List[Tuple[int, int, int, int, bool]] = []
-        self._init_level(0)
-
-    def _init_level(self, lvl: int) -> None:
-        self.level_idx = lvl
-        self.steps_in_level = 0
-        self.history_stack.clear()
-        offset = (self.variant + lvl) * 2
-        self.start_r = 12 + offset
-        self.start_c = 12 + (self.variant * 2)
-        self.av_r = self.start_r
-        self.av_c = self.start_c
-        if self.family == 3:
-            self.box_r = self.av_r + (1 if lvl >= 2 else 0)
-            self.box_c = self.av_c + 2
-            self.goal_r = self.av_r + (3 if lvl >= 2 else 0)
-            self.goal_c = self.av_c + 4 + lvl
-        elif self.family == 4:
-            self.box_r = 0
-            self.box_c = 0
-            self.trap_r = self.start_r
-            self.trap_c = self.start_c + 2
-            self.goal_r = self.start_r + 3 + lvl
-            self.goal_c = self.start_c + 4 + lvl
-        else:
-            self.box_r = self.av_r + 2
-            self.box_c = self.av_c + 3
-            self.goal_r = self.av_r + 4 + lvl
-            self.goal_c = self.av_c + 5 + lvl
-        self.switch_r = self.av_r + 2
-        self.switch_c = self.av_c + 3
-        self.gate_open = False
-        self.tiles: List[Tuple[int, int, int]] = []
-        if self.family == 2:
-            base_r, base_c = 14 + self.variant * 2, 14 + lvl * 2
-            self.tiles = [
-                (base_r, base_c, 3),
-                (base_r, base_c + 5, 3),
-                (base_r, base_c + 10, 3),
-                (base_r + 5, base_c, 6),
-                (base_r + 5, base_c + 5, 6 if lvl >= 2 else 3),
-            ]
-        self.frame = self._render()
-
-    @property
-    def available_actions(self) -> List[int]:
-        if self.family == 2:
-            return [6, 7]
-        return [1, 2, 3, 4, 6, 7]
-
-    def _render(self) -> np.ndarray:
-        g = np.zeros((64, 64), dtype=np.int8)
-        g[1, 2 : 2 + ((self.steps_in_level * 3) % 36) + 2] = 14
-        if self.family == 2:
-            for i in range(4):
-                dr, dc = 38 + i * 4, 10 + i * 6
-                g[dr : dr + 2, dc : dc + 2] = 11
-            for tr, tc, tcol in self.tiles:
-                g[tr : tr + 3, tc : tc + 3] = tcol
-            return g
-
-        if self.family == 0:
-            wall_c = (self.start_c + self.goal_c) // 2
-            for r in range(self.start_r - 1, self.goal_r):
-                g[r, wall_c] = 8
-        elif self.family == 1 and not self.gate_open:
-            for dr in range(-1, 2):
-                for dc in range(-1, 2):
-                    if dr != 0 or dc != 0:
-                        g[self.goal_r + dr, self.goal_c + dc] = 8
-            g[self.switch_r, self.switch_c] = 4
-        elif self.family == 3:
-            g[self.box_r, self.box_c] = 6
-        elif self.family == 4:
-            g[self.trap_r, self.trap_c] = 12
-
-        g[self.goal_r, self.goal_c] = 9
-        g[self.av_r, self.av_c] = 2
-        return g
-
-    def step(self, act_id: int, data: Optional[Dict[str, int]] = None) -> "FrameObs":
-        if act_id == 0:
-            self._init_level(self.level_idx)
-            return FrameObs(self.frame, self.state, self.levels_completed, self.available_actions)
-
-        self.steps_in_level += 1
-
-        if act_id == 7 and self.history_stack:
-            self.av_r, self.av_c, self.box_r, self.box_c, self.gate_open = self.history_stack.pop()
-            self.frame = self._render()
-            return FrameObs(self.frame, self.state, self.levels_completed, self.available_actions)
-
-        prev_state_tuple = (self.av_r, self.av_c, self.box_r, self.box_c, self.gate_open)
-
-        if self.family == 2:
-            if act_id == 6 and data:
-                cx, cy = int(data.get("x", 0)), int(data.get("y", 0))
-                new_tiles = []
-                for tr, tc, tcol in self.tiles:
-                    if tr <= cy < tr + 3 and tc <= cx < tc + 3:
-                        tcol = 3 if tcol == 6 else 6
-                    new_tiles.append((tr, tc, tcol))
-                self.tiles = new_tiles
-                if all(t[2] == 3 for t in self.tiles):
-                    self._complete_current_level()
-            self.frame = self._render()
-            return FrameObs(self.frame, self.state, self.levels_completed, self.available_actions)
-
-        move_map = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
-        if act_id in move_map:
-            dr, dc = move_map[act_id]
-            nr, nc = self.av_r + dr, self.av_c + dc
-            if 6 <= nr < 58 and 6 <= nc < 58:
-                if self.family == 4 and (self.av_r, self.av_c) == (self.trap_r, self.trap_c):
-                    pass
-                elif self.family == 3 and (nr, nc) == (self.box_r, self.box_c):
-                    bnr, bnc = self.box_r + dr, self.box_c + dc
-                    if 6 <= bnr < 58 and 6 <= bnc < 58:
-                        self.box_r, self.box_c = bnr, bnc
-                        self.av_r, self.av_c = nr, nc
-                elif int(self.frame[nr, nc]) != 8:
-                    self.av_r, self.av_c = nr, nc
-
-        if self.family == 1 and (self.av_r, self.av_c) == (self.switch_r, self.switch_c):
-            self.gate_open = True
-
-        new_state_tuple = (self.av_r, self.av_c, self.box_r, self.box_c, self.gate_open)
-        if new_state_tuple != prev_state_tuple:
-            self.history_stack.append(prev_state_tuple)
-
-        if self.family == 3:
-            if (self.box_r, self.box_c) == (self.goal_r, self.goal_c):
-                self._complete_current_level()
-        else:
-            if (self.av_r, self.av_c) == (self.goal_r, self.goal_c):
-                self._complete_current_level()
-
-        self.frame = self._render()
-        return FrameObs(self.frame, self.state, self.levels_completed, self.available_actions)
-
-    def _complete_current_level(self) -> None:
-        self.level_actions_recorded[self.level_idx] = max(1, self.steps_in_level)
-        self.levels_completed += 1
-        if self.levels_completed >= self.num_levels:
-            self.state = "WIN"
-        else:
-            self._init_level(self.levels_completed)
-
-class FrameObs:
-    def __init__(
-        self, frame: np.ndarray, state: str, levels_completed: int, available_actions: List[int]
-    ):
-        self.frame = frame
-        self.state = state
-        self.levels_completed = levels_completed
-        self.available_actions = available_actions
-
 def run_offline_evaluation(
     game_ids: Optional[List[str]] = None,
     environments_dir: Optional[str] = None,
@@ -346,185 +167,126 @@ def run_offline_evaluation(
         import arc_agi
         from arc_agi import Arcade, OperationMode
         from arcengine import GameAction, GameState
+    except ImportError as err:
+        raise RuntimeError(
+            f"Official arc_agi package is required for real ARC-AGI-3 evaluation: {err}"
+        ) from err
 
-        env_dir = environments_dir
-        if env_dir is None:
-            for candidate in ("environment_files", "arc-interactive/environment_files"):
-                if Path(candidate).exists():
-                    env_dir = candidate
+    env_dir = environments_dir
+    if env_dir is None:
+        for candidate in ("environment_files", "arc-interactive/environment_files", "/kaggle/input/arc-agi-3/environment_files"):
+            if Path(candidate).exists():
+                env_dir = candidate
+                break
+    arcade_kwargs: Dict[str, Any] = {"operation_mode": OperationMode.OFFLINE}
+    if env_dir is not None:
+        arcade_kwargs["environments_dir"] = env_dir
+    arc = Arcade(**arcade_kwargs)
+
+    if not game_ids:
+        if env_dir and Path(env_dir).exists():
+            game_ids = sorted(
+                [
+                    d.name
+                    for d in Path(env_dir).iterdir()
+                    if d.is_dir() and not d.name.startswith(".")
+                ]
+            )[:25]
+        else:
+            game_ids = ["ls20", "ft09", "vc33"]
+
+    for idx, gid in enumerate(game_ids):
+        g_start = time.perf_counter()
+        agent.reset_game()
+        levels_cleared = 0
+        steps_taken = 0
+        level_step_counter = 0
+        level_actions_list: List[Optional[int]] = []
+        crashed = False
+        failure_reason = ""
+        try:
+            env = arc.make(gid)
+            if env is None:
+                continue
+            obs = env.reset()
+            max_steps, max_time_s = agent.scheduler.allocate_game_budget(0)
+            if max_steps_override is not None:
+                max_steps = max_steps_override
+            while steps_taken < max_steps and (time.perf_counter() - g_start) < max_time_s:
+                if obs is None:
                     break
-        arcade_kwargs: Dict[str, Any] = {"operation_mode": OperationMode.OFFLINE}
-        if env_dir is not None:
-            arcade_kwargs["environments_dir"] = env_dir
-        arc = Arcade(**arcade_kwargs)
-
-        if not game_ids:
-            if env_dir and Path(env_dir).exists():
-                game_ids = sorted(
-                    [
-                        d.name
-                        for d in Path(env_dir).iterdir()
-                        if d.is_dir() and not d.name.startswith(".")
-                    ]
-                )[:25]
-            else:
-                game_ids = ["ls20", "ft09", "vc33"]
-
-        for idx, gid in enumerate(game_ids):
-            g_start = time.perf_counter()
-            agent.reset_game()
-            levels_cleared = 0
-            steps_taken = 0
-            level_step_counter = 0
-            level_actions_list: List[Optional[int]] = []
-            crashed = False
-            failure_reason = ""
-            try:
-                env = arc.make(gid)
-                if env is None:
-                    continue
-                obs = env.reset()
-                max_steps, max_time_s = agent.scheduler.allocate_game_budget(0)
-                if max_steps_override is not None:
-                    max_steps = max_steps_override
-                while steps_taken < max_steps and (time.perf_counter() - g_start) < max_time_s:
-                    if obs is None:
-                        break
-                    state_obj = getattr(obs, "state", None)
-                    state_name = str(getattr(state_obj, "name", state_obj or "PLAYING")).upper()
-                    levels_completed = int(getattr(obs, "levels_completed", levels_cleared) or 0)
-                    if levels_completed > levels_cleared:
-                        for _ in range(levels_completed - levels_cleared):
-                            level_actions_list.append(max(1, level_step_counter))
-                        levels_cleared = levels_completed
-                        level_step_counter = 0
-                        agent.scheduler.total_levels_cleared += 1
-                        max_steps, max_time_s = agent.scheduler.allocate_game_budget(levels_cleared)
-                        if max_steps_override is not None:
-                            max_steps = max_steps_override
-                    if state_name == "WIN" or state_obj == GameState.WIN:
-                        break
-                    if state_name in ("GAME_OVER", "NOT_PLAYED") or state_obj in (
-                        GameState.GAME_OVER,
-                        GameState.NOT_PLAYED,
-                    ):
-                        obs = env.step(GameAction.RESET)
-                        steps_taken += 1
-                        level_step_counter += 1
-                        continue
-                    avail_ids = _extract_available_action_ids(obs, env)
-                    act_id, act_data = agent.act(
-                        raw_obs=obs,
-                        available_actions=avail_ids,
-                        levels_completed=levels_cleared,
-                        state_str=state_name,
-                    )
-                    action_enum = getattr(GameAction, f"ACTION{act_id}", GameAction.ACTION1)
-                    if act_id == 0:
-                        action_enum = GameAction.RESET
-                    if act_id == 6:
-                        obs = env.step(action_enum, data=act_data)
-                    else:
-                        obs = env.step(action_enum)
+                state_obj = getattr(obs, "state", None)
+                state_name = str(getattr(state_obj, "name", state_obj or "PLAYING")).upper()
+                levels_completed = int(getattr(obs, "levels_completed", levels_cleared) or 0)
+                if levels_completed > levels_cleared:
+                    for _ in range(levels_completed - levels_cleared):
+                        level_actions_list.append(max(1, level_step_counter))
+                    levels_cleared = levels_completed
+                    level_step_counter = 0
+                    agent.scheduler.total_levels_cleared += 1
+                    max_steps, max_time_s = agent.scheduler.allocate_game_budget(levels_cleared)
+                    if max_steps_override is not None:
+                        max_steps = max_steps_override
+                if state_name == "WIN" or state_obj == GameState.WIN:
+                    break
+                if state_name in ("GAME_OVER", "NOT_PLAYED") or state_obj in (
+                    GameState.GAME_OVER,
+                    GameState.NOT_PLAYED,
+                ):
+                    obs = env.step(GameAction.RESET)
                     steps_taken += 1
                     level_step_counter += 1
-            except Exception as exc:
-                crashed = True
-                failure_reason = str(exc)
-                logger.warning(f"Game {gid} isolated exception: {exc}")
-
-            total_lvls = max(5, levels_cleared)
-            padded_actions: List[Optional[int]] = list(level_actions_list) + [None] * max(
-                0, total_lvls - len(level_actions_list)
-            )
-            baselines = [12 + 3 * i for i in range(total_lvls)]
-            game_score = compute_game_rhae(padded_actions, baselines)
-            agent.scheduler.games_completed += 1
-            results_per_game.append(
-                {
-                    "game_id": gid,
-                    "score": game_score,
-                    "levels_cleared": levels_cleared,
-                    "actions": steps_taken,
-                    "runtime_s": round(time.perf_counter() - g_start, 3),
-                    "crashed": crashed,
-                    "failure_reason": failure_reason,
-                }
-            )
-            parquet_rows.append(
-                {
-                    "row_id": f"{gid}_{idx}",
-                    "game_id": str(gid),
-                    "end_of_game": True,
-                    "score": float(game_score),
-                }
-            )
-    except ImportError:
-        default_25 = [f"sim_env_{i:02d}" for i in range(25)]
-        eval_games = game_ids or default_25
-        for idx, gid in enumerate(eval_games):
-            g_start = time.perf_counter()
-            agent.reset_game()
-            tail = str(gid).split("_")[-1]
-            g_num = int(tail) if tail.isdigit() else idx
-            sim_env = _LocalMultiLevelARC3Env(g_num)
-            obs = FrameObs(
-                sim_env.frame,
-                sim_env.state,
-                sim_env.levels_completed,
-                sim_env.available_actions,
-            )
-            steps_taken = 0
-            max_s = max_steps_override or 120
-            crashed = False
-            failure_reason = ""
-            try:
-                while steps_taken < max_s and obs.state != "WIN":
-                    act_id, act_data = agent.act(
-                        raw_obs=obs,
-                        available_actions=obs.available_actions,
-                        levels_completed=obs.levels_completed,
-                        state_str=obs.state,
-                    )
-                    obs = sim_env.step(act_id, act_data)
-                    steps_taken += 1
-                    if sim_env.steps_in_level > config.max_actions_per_level:
-                        break
-            except Exception as exc:
-                crashed = True
-                failure_reason = str(exc)
-
-            if not config.enable_iw_search and len(sim_env.level_actions_recorded) >= 5:
-                sim_env.level_actions_recorded[4] = None
-                sim_env.levels_completed = sum(
-                    1 for x in sim_env.level_actions_recorded if x is not None
+                    continue
+                avail_ids = _extract_available_action_ids(obs, env)
+                act_id, act_data = agent.act(
+                    raw_obs=obs,
+                    available_actions=avail_ids,
+                    levels_completed=levels_cleared,
+                    state_str=state_name,
                 )
+                action_enum = getattr(GameAction, f"ACTION{act_id}", GameAction.ACTION1)
+                if act_id == 0:
+                    action_enum = GameAction.RESET
+                if act_id == 6:
+                    obs = env.step(action_enum, data=act_data)
+                else:
+                    obs = env.step(action_enum)
+                steps_taken += 1
+                level_step_counter += 1
+        except Exception as exc:
+            crashed = True
+            failure_reason = str(exc)
+            logger.warning(f"Game {gid} isolated exception: {exc}")
 
-            game_score = compute_game_rhae(
-                sim_env.level_actions_recorded, sim_env.human_baselines
-            )
-            parquet_rows.append(
-                {
-                    "row_id": f"{gid}_{idx}",
-                    "game_id": str(gid),
-                    "end_of_game": True,
-                    "score": float(game_score),
-                }
-            )
-            results_per_game.append(
-                {
-                    "game_id": gid,
-                    "score": float(game_score),
-                    "levels_cleared": sim_env.levels_completed,
-                    "actions": steps_taken,
-                    "runtime_s": round(time.perf_counter() - g_start, 4),
-                    "crashed": crashed,
-                    "failure_reason": failure_reason,
-                }
-            )
+        total_lvls = max(5, levels_cleared)
+        padded_actions: List[Optional[int]] = list(level_actions_list) + [None] * max(
+            0, total_lvls - len(level_actions_list)
+        )
+        baselines = [12 + 3 * i for i in range(total_lvls)]
+        game_score = compute_game_rhae(padded_actions, baselines)
+        agent.scheduler.games_completed += 1
+        results_per_game.append(
+            {
+                "game_id": gid,
+                "score": game_score,
+                "levels_cleared": levels_cleared,
+                "actions": steps_taken,
+                "runtime_s": round(time.perf_counter() - g_start, 3),
+                "crashed": crashed,
+                "failure_reason": failure_reason,
+            }
+        )
+        parquet_rows.append(
+            {
+                "row_id": f"{gid}_{idx}",
+                "game_id": str(gid),
+                "end_of_game": True,
+                "score": float(game_score),
+            }
+        )
 
     write_submission_parquet(parquet_rows, output_path=parquet_path)
-    llm_inst = LocalLLMRuntime.get_instance(config)
+    llm_inst = OfflineServerManager.get_instance(config)
     total_runtime = round(time.perf_counter() - t_start, 3)
     mean_score = (
         round(sum(r["score"] for r in results_per_game) / len(results_per_game), 2)
@@ -542,7 +304,7 @@ def run_offline_evaluation(
             if results_per_game
             else 0.0
         ),
-        "llm_loaded": llm_inst.is_loaded,
+        "llm_loaded": llm_inst.is_ready,
         "llm_fallback_rate": (
             round(llm_inst.fallback_count / float(max(1, llm_inst.total_calls)), 3)
             if llm_inst.total_calls > 0

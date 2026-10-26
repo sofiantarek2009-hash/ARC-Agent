@@ -1,6 +1,6 @@
 from collections import deque
 import math
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 from project_override.perception.observation_processor import Entity
 
@@ -79,6 +79,12 @@ class HypothesisStore:
         self.goal_colors: Set[int] = set()
         self.pushable_colors: Set[int] = set()
         self.switch_colors: Set[int] = set()
+        self.canvas_bg: Optional[int] = None
+        self.floor_color: Optional[int] = None
+        self.avatar_half_w: int = 0
+        self.avatar_stride: int = 1
+        self.avatar_mass_by_color: Dict[int, int] = {}
+        self.current_av_pos: Optional[Tuple[int, int]] = None
         self.click_color_transitions: Dict[int, int] = {}
         self.portal_map: Dict[Tuple[int, int], Tuple[int, int]] = {}
         self.checked_rules: Dict[str, str] = {}
@@ -88,6 +94,53 @@ class HypothesisStore:
         self.level_clear_summaries: List[str] = []
         self.bayesian_tracker = BayesianExplorationTracker()
         self.interacted_object_centers: Set[Tuple[int, int]] = set()
+
+    def update_from_kinematics(
+        self, kin: Dict[str, Any], action_id: int, enable_orthogonal: bool = True
+    ) -> None:
+        if not kin:
+            return
+        if kin.get("floor_color") is not None:
+            self.floor_color = int(kin["floor_color"])
+        if kin.get("avatar_colors"):
+            self.avatar_colors.update(kin["avatar_colors"])
+        if kin.get("avatar_color_counts"):
+            self.avatar_mass_by_color.update(kin["avatar_color_counts"])
+        if kin.get("half_w"):
+            self.avatar_half_w = max(self.avatar_half_w, int(kin["half_w"]))
+
+        # Check for teleport / portal discontinuity
+        if kin.get("vector") and kin["vector"] != (0, 0):
+            dr, dc = kin["vector"]
+            stride = max(abs(dr), abs(dc))
+            known_strides = [
+                max(abs(v[0]), abs(v[1])) for v in self.displacement_vectors.values()
+            ]
+            if known_strides and stride > max(3, min(known_strides) * 2):
+                old_pos = self.current_av_pos
+                new_pos = (
+                    int(round(kin["avatar_centroid"][0])),
+                    int(round(kin["avatar_centroid"][1])),
+                )
+                if old_pos is not None:
+                    self.portal_map[old_pos] = new_pos
+                self.current_av_pos = new_pos
+                return
+
+            if kin.get("stride"):
+                self.avatar_stride = int(kin["stride"])
+            self.displacement_vectors[int(action_id)] = (int(dr), int(dc))
+            self.checked_rules[f"move_A{action_id}"] = f"delta=({dr},{dc})"
+            opp = self.OPPOSITE_ACTION.get(int(action_id))
+            if enable_orthogonal and opp is not None and opp not in self.displacement_vectors:
+                self.provisional_vectors[opp] = (-int(dr), -int(dc))
+                self.assumed_hypotheses[f"ortho_A{opp}"] = f"assumed_delta=({-dr},{-dc})"
+
+        if kin.get("avatar_centroid"):
+            self.current_av_pos = (
+                int(round(kin["avatar_centroid"][0])),
+                int(round(kin["avatar_centroid"][1])),
+            )
 
     def get_effective_vectors(self, enable_orthogonal: bool = True) -> Dict[int, Tuple[int, int]]:
         if not enable_orthogonal:
@@ -114,6 +167,7 @@ class HypothesisStore:
             self.checked_rules[f"L{prev_level}_verified"] = summary
         self.portal_map.clear()
         self.interacted_object_centers.clear()
+        self.current_av_pos = None
 
     def observe_entity_motions(
         self,
@@ -163,19 +217,32 @@ class HypothesisStore:
         if len(tracked_sorted) >= 2:
             pe2, ce2, (dr2, dc2) = tracked_sorted[1]
             if abs(dr2) > 0.1 or abs(dc2) > 0.1:
-                self.pushable_colors.add(pe2.color)
-                self.checked_rules[f"pushable_c{pe2.color}"] = "movable_block"
+                # If pe2 translated synchronously with the avatar, it is part of a composite avatar!
+                if abs(dr2 - dr) < 0.5 and abs(dc2 - dc) < 0.5:
+                    self.avatar_colors.add(pe2.color)
+                    self.pushable_colors.discard(pe2.color)
+                elif pe2.color not in self.avatar_colors:
+                    self.pushable_colors.add(pe2.color)
+                    self.checked_rules[f"pushable_c{pe2.color}"] = "movable_block"
 
-    def locate_avatar(self, entities: List[Entity]) -> Optional[Tuple[int, int]]:
-        if not entities:
+    def locate_avatar(
+        self, entities: List[Entity], grid: Optional[np.ndarray] = None
+    ) -> Optional[Tuple[int, int]]:
+        if self.current_av_pos is not None:
+            return self.current_av_pos
+        if not entities or not self.avatar_colors:
             return None
-        if self.avatar_colors:
-            candidates = [e for e in entities if e.color in self.avatar_colors]
-            if candidates:
+        candidates = [e for e in entities if e.color in self.avatar_colors]
+        if candidates:
+            if self.avatar_mass_by_color:
+                best = min(
+                    candidates,
+                    key=lambda e: abs(e.mass - self.avatar_mass_by_color.get(e.color, 0)),
+                )
+            else:
                 best = min(candidates, key=lambda e: e.mass)
-                return (int(round(best.centroid[0])), int(round(best.centroid[1])))
-        smallest = min(entities, key=lambda e: (e.mass, e.id))
-        return (int(round(smallest.centroid[0])), int(round(smallest.centroid[1])))
+            return (int(round(best.centroid[0])), int(round(best.centroid[1])))
+        return None
 
     def add_reasoning_trace(self, step_idx: int, level_idx: int, thought: str) -> None:
         clean = thought.strip().replace("\n", " ")[:220]

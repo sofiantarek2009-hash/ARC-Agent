@@ -1,7 +1,7 @@
-from project_override.execution.safe_executor import (
+from project_override.execution.avo_supervisor import (
+    AVOSupervisor,
     DPrimeComputeScheduler,
     SafeGameExecutor,
-    TrajectorySupervisor,
 )
 
-__all__ = ["DPrimeComputeScheduler", "SafeGameExecutor", "TrajectorySupervisor"]
+__all__ = ["AVOSupervisor", "DPrimeComputeScheduler", "SafeGameExecutor"]

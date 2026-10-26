@@ -4,48 +4,65 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from project_override.config import AgentConfig
-from project_override.execution.safe_executor import (
+from project_override.execution.avo_supervisor import (
+    AVOSupervisor,
     DPrimeComputeScheduler,
     SafeGameExecutor,
-    TrajectorySupervisor,
 )
-from project_override.llm.local_runtime import LocalLLMRuntime
-from project_override.llm.repl import SandboxedREPL
+from project_override.llm.codeact_engine import (
+    OfflineServerManager,
+    SandboxedCodeActREPL,
+)
 from project_override.memory.action_ledger import ActionLedger, compute_arena_hash
-from project_override.memory.hypothesis_store import HypothesisStore
-from project_override.perception.observation_processor import ObservationProcessor
-from project_override.planning.explorer import SmartClickExplorer, bfs_frontier_explore
-from project_override.planning.planner import EmpiricalWorldModel, MacroActionQueue, astar_grid
+from project_override.memory.lineage_dag import LineageDAG
+from project_override.memory.semantic_compactor import SemanticMemoryCompactor
+from project_override.perception.observation_processor import (
+    Entity,
+    ObservationProcessor,
+)
+from project_override.planning.general_explorer import (
+    GeneralInteractionExplorer,
+    MacroActionQueue,
+    astar_grid,
+)
+from project_override.planning.verifier_gate import GroundedVerifierGate
+from project_override.prompts.system_prompt import build_agent_prompt
 
 logger = logging.getLogger(__name__)
 
+
 class GeneralAgent:
+    """GeneralAgent v5.0: ARC-AGI-3 NVIDIA AVO + CodeAct REPL Architecture.
+    
+    Implements a strict, game-agnostic, zero-handcoded 9-stage pipeline:
+    1. State Management (Level advance / death handling / reset discipline)
+    2. Dynamic Perception (scipy CCL segmentation, Hungarian tracking, compass vector fix)
+    3. Structured Transition Recording (LineageDAG, ActionLedger, SemanticCompactor)
+    4. NVIDIA AVO Trajectory Supervisor (sigma_t stagnation detection, multi-step ACTION7 Undo)
+    5. Grounded Verifier Gate (fail-closed precondition checks against dead signatures and cycles)
+    6. Guarded Macro Action Queue (buffered sequential execution with NO-OP drop guards)
+    7. Sandboxed Python CodeAct REPL (OpenAI-compatible vLLM/SGLang offline inference)
+    8. General Interaction Explorer (card-memory fix, deliberate ACTION5 probing, smart entity clicks)
+    9. Novelty-Biased Discrete Fallback (Kepler graph exploration that never deadlocks)
     """
-    General, observation-driven ARC-AGI-3 agent (Project Override v4.0) combining:
-    - Active Orthogonal Basis Completion & Subframe Kinematic Induction (eliminates Level 1 probing tax)
-    - Live Sandboxed Python REPL + PRO-LONG log query (Tufa Duck / PRO-LONG arXiv:2607.20064)
-    - Executable World-Model Induction, Retrodiction, 2D Joint Sokoban A* & Iterated Width IW(1)
-    - Ledger Inform/Govern Execution-State Runtime Layer (Wang et al. arXiv:2608.00808)
-    - OPINE-World Lifted Bayesian Exploration Guidance S_B (arXiv:2607.01531)
-    - NVIDIA AVO Trajectory Supervisor & THEA/Retrodict Tiered Escalation (arXiv:2603.24517)
-    - Interior-board no-op guards & ACTION7 Undo backtracking (Franzen M2)
-    - S4 Reasoning Replay & Two-Part Playbook Memory (arXiv:2610.26632)
-    """
+
     def __init__(self, config: Optional[AgentConfig] = None):
         self.config = config or AgentConfig()
+        
+        # Modules
         self.processor = ObservationProcessor(enable_hud_masking=self.config.enable_hud_masking)
         self.ledger = ActionLedger(enable_dead_signatures=self.config.enable_dead_signatures)
-        self.hypotheses = HypothesisStore()
-        self.world_model = EmpiricalWorldModel(self.processor, self.hypotheses)
+        self.lineage_dag = LineageDAG()
+        self.compactor = SemanticMemoryCompactor(self.config)
+        self.supervisor = AVOSupervisor(self.config)
+        self.verifier_gate = GroundedVerifierGate(self.config)
         self.macro_queue = MacroActionQueue()
-        self.click_explorer = SmartClickExplorer(self.processor)
-        self.repl = SandboxedREPL(max_plan_len=self.config.max_repl_plan_len)
+        self.explorer = GeneralInteractionExplorer(self.processor)
+        self.repl = SandboxedCodeActREPL(max_plan_len=self.config.max_repl_plan_len)
         self.scheduler = DPrimeComputeScheduler(self.config)
-        self.supervisor = TrajectorySupervisor(
-            enabled=self.config.enable_avo_supervisor,
-            max_actions_per_level=self.config.max_actions_per_level,
-        )
         self.executor = SafeGameExecutor(self.scheduler)
+
+        # State tracking
         self.current_level: int = 0
         self.step_in_game: int = 0
         self.step_in_level: int = 0
@@ -53,11 +70,9 @@ class GeneralAgent:
         self.prev_hash: Optional[int] = None
         self.last_action_id: Optional[int] = None
         self.last_click_xy: Tuple[int, int] = (0, 0)
-        self.last_clicked_sig: Optional[Tuple[int, int, int, int]] = None
         self.last_delta_omega: Optional[int] = None
-        self.visited_cells: Set[Tuple[int, int]] = set()
+        self.avatar_pos: Optional[Tuple[int, int]] = None
         self.wall_cells: Set[Tuple[int, int]] = set()
-        self.rolling_turns: deque = deque(maxlen=self.config.max_rolling_turns)
 
     def reset_game(self) -> None:
         self.current_level = 0
@@ -67,76 +82,36 @@ class GeneralAgent:
         self.prev_hash = None
         self.last_action_id = None
         self.last_click_xy = (0, 0)
-        self.last_clicked_sig = None
         self.last_delta_omega = None
-        self.visited_cells.clear()
+        self.avatar_pos = None
         self.wall_cells.clear()
-        self.rolling_turns.clear()
         self.ledger.reset_level(clear_deaths=True)
-        self.hypotheses = HypothesisStore()
-        self.world_model = EmpiricalWorldModel(self.processor, self.hypotheses)
-        self.macro_queue.clear()
+        self.lineage_dag = LineageDAG()
+        self.compactor.reset_level()
         self.supervisor.reset_level()
+        self.verifier_gate.reset_level()
+        self.macro_queue.clear()
+        self.explorer.reset_level()
         self.processor.hud_masker.reset_level()
 
     def _on_level_advance(self, new_level: int) -> None:
-        self.hypotheses.reset_for_new_level(cleared_previous=True, prev_level=self.current_level)
+        logger.info(f"[GeneralAgent] Advanced to Level {new_level} (cleared Level {self.current_level} in {self.step_in_level} actions).")
+        self.lineage_dag.on_level_clear(self.current_level, self.step_in_level)
+        self.compactor.on_level_clear(self.current_level, self.lineage_dag)
+        
         self.current_level = new_level
         self.step_in_level = 0
         self.prev_grid = None
         self.prev_hash = None
         self.last_action_id = None
         self.last_delta_omega = None
-        self.visited_cells.clear()
+        self.avatar_pos = None
         self.wall_cells.clear()
         self.ledger.reset_level(clear_deaths=False)
         self.macro_queue.clear()
         self.supervisor.reset_level()
-        if not self.config.enable_orthogonal_completion:
-            self.processor.hud_masker.reset_level()
-
-    def build_repl_prompt(
-        self,
-        grid: np.ndarray,
-        avail_actions: List[int],
-        av_pos: Optional[Tuple[int, int]],
-        diff_str: str,
-        curr_hash: int,
-    ) -> str:
-        obs_str = self.processor.encode_compact_observation(grid)
-        epistemic_str = self.hypotheses.format_epistemic_memory()
-        exec_state_str = self.ledger.render_execution_state(
-            curr_hash, avail_actions, self.current_level
-        )
-        recent_str = "\n".join(self.rolling_turns) if self.rolling_turns else "None"
-        untried = self.ledger.get_untried_discrete_actions(
-            curr_hash, avail_actions, self.current_level
-        )
-        audit_notice = (
-            "\nSTRATEGY_AUDIT_ALERT: >25% of level action budget used; verify world model against query_log() and test unvisited object interactions!\n"
-            if self.supervisor.strategy_audit_active
-            else ""
-        )
-        return (
-            "ROLE: Autonomous ARC-AGI-3 scientist & coding agent (Duck REPL + Retrodict + Schema + THEA).\n"
-            "DIRECTIVES:\n"
-            "1. RETRODICTION: Check hypotheses against recorded history via query_log() before acting.\n"
-            "2. EXPLORE THEN COMMIT: Probe uncertain mechanics with single moves; batch predictable paths.\n"
-            "3. HUD GUIDANCE: Ignore border strips that tick on every step (timers/step counters).\n"
-            "4. RESET DISCIPLINE: Use ACTION7 (Undo) when stuck; never issue two RESETs in a row.\n"
-            f"{audit_notice}"
-            f"LEVEL: {self.current_level} | STEP_IN_LEVEL: {self.step_in_level} | ESCALATION_TIER: {self.supervisor.escalation_tier}\n"
-            f"AVAIL_ACTIONS: {avail_actions} | UNTRIED_DISCRETE: {untried}\n"
-            f"LEDGER_INFORM_STATE: {exec_state_str}\n"
-            f"AVATAR_RC: {av_pos} | LAST_DIFF: {diff_str} | WM_BACKTEST_ACC: {self.world_model.last_backtest_score:.2f}\n"
-            f"{epistemic_str}\n"
-            f"RECENT_TURNS:\n{recent_str}\n"
-            f"CURRENT_OBSERVATION:\n{obs_str}\n\n"
-            "INSTRUCTIONS:\n"
-            "Respond with either a ```python ... ``` block calling act(action_id, x=0, y=0), note(k, v),\n"
-            "or register_world_model(step_fn, goal_fn), OR a single JSON object:\n"
-            '{"thought": "...", "subgoal": "ACTION", "action_id": 1} or {"thought": "...", "subgoal": "CLICK", "click_xy": [x, y]}.'
-        )
+        self.verifier_gate.reset_level()
+        self.explorer.reset_level()
 
     def act(
         self,
@@ -145,6 +120,7 @@ class GeneralAgent:
         levels_completed: int = 0,
         state_str: str = "PLAYING",
     ) -> Tuple[int, Dict[str, Any]]:
+        """Public ABI step entry point, wrapped in SafeGameExecutor."""
         return self.executor.safe_step(
             lambda: self._act_internal(raw_obs, available_actions, levels_completed, state_str),
             default_action=1,
@@ -157,12 +133,12 @@ class GeneralAgent:
         levels_completed: int = 0,
         state_str: str = "PLAYING",
     ) -> Tuple[int, Dict[str, Any]]:
+        
+        # ---------------------------------------------------------
+        # STAGE 1: State Management (Game Over / Level Advance / Resets)
+        # ---------------------------------------------------------
         if state_str in ("NOT_PLAYED", "GAME_OVER"):
-            if (
-                state_str == "GAME_OVER"
-                and self.prev_hash is not None
-                and self.last_action_id is not None
-            ):
+            if state_str == "GAME_OVER" and self.prev_hash is not None and self.last_action_id is not None:
                 self.ledger.record_death(
                     self.prev_hash,
                     self.last_action_id,
@@ -173,14 +149,16 @@ class GeneralAgent:
             self.macro_queue.clear()
             self.prev_grid = None
             self.prev_hash = None
-            if self.supervisor.can_issue_reset():
-                self.supervisor.observe_state(0, 0, self.step_in_level)
+            if self.supervisor.can_issue_reset(self.step_in_level):
                 return 0, {}
             return 1, {}
 
         if levels_completed > self.current_level:
             self._on_level_advance(levels_completed)
 
+        # ---------------------------------------------------------
+        # STAGE 2: Perception & Kinematics
+        # ---------------------------------------------------------
         anim_frames = self.processor.extract_animation_sequence(raw_obs)
         arr = anim_frames[-1]
         avail = sorted({int(a) for a in (available_actions or [1, 2, 3, 4, 5, 6]) if int(a) != 0})
@@ -190,42 +168,41 @@ class GeneralAgent:
         self.step_in_game += 1
         self.step_in_level += 1
 
-        bg_color = self.processor.induce_background_color(arr)
-        curr_entities = self.processor.extract_entities(arr, bg_color=bg_color)
+        canvas_bg, floor_color = self.processor.induce_canvas_and_floor(arr)
+        curr_entities = self.processor.extract_entities(arr, bg_color=canvas_bg, floor_color=floor_color)
         diff_str = "INITIAL_FRAME"
 
-        if (
-            self.prev_grid is not None
-            and self.prev_hash is not None
-            and self.last_action_id is not None
-        ):
+        if self.prev_grid is not None and self.prev_hash is not None and self.last_action_id is not None:
             self.processor.hud_masker.observe_transition(self.prev_grid, arr)
             curr_hash = compute_arena_hash(arr, self.processor.hud_masker)
             delta_omega = self.processor.compute_delta_omega(self.prev_grid, arr)
             self.last_delta_omega = delta_omega
             diff_str = self.processor.summarize_transition(self.prev_grid, arr, anim_frames)
-            prev_entities = self.processor.extract_entities(self.prev_grid, bg_color=bg_color)
-            tracked = self.processor.track_entities(prev_entities, curr_entities)
-            if not tracked and len(anim_frames) > 1:
-                tracked = self.processor.extract_subframe_kinematics(
-                    self.prev_grid, anim_frames, bg_color
-                )
-            self.hypotheses.observe_entity_motions(
-                self.last_action_id,
-                tracked,
+
+            # Update avatar position & movement kinematics
+            kin = self.processor.extract_transition_kinematics(self.prev_grid, arr)
+            if kin:
+                cent = kin.get("avatar_centroid")
+                if cent:
+                    self.avatar_pos = (int(round(cent[0])), int(round(cent[1])))
+
+            # ---------------------------------------------------------
+            # STAGE 3: Structured Transition Recording
+            # ---------------------------------------------------------
+            self.lineage_dag.record_step(
+                step=self.step_in_level,
+                level=self.current_level,
+                action_id=self.last_action_id,
+                x=self.last_click_xy[0],
+                y=self.last_click_xy[1],
+                pre_hash=self.prev_hash,
+                post_hash=curr_hash,
+                delta_omega=delta_omega,
                 pre_grid=self.prev_grid,
                 post_grid=arr,
-                click_xy=self.last_click_xy,
-                enable_orthogonal=self.config.enable_orthogonal_completion,
+                avatar_pos=self.avatar_pos,
+                diff_summary=diff_str,
             )
-            if self.last_clicked_sig is not None:
-                eff_tag = "NO_OP" if delta_omega == 0 else f"DELTA_{min(20, delta_omega)}"
-                self.hypotheses.bayesian_tracker.record_effect(
-                    self.last_clicked_sig, self.last_action_id, eff_tag
-                )
-            if self.last_action_id in (1, 2, 3, 4) and delta_omega >= 6:
-                self.wall_cells.clear()
-                self.macro_queue.clear()
             self.ledger.record_transition(
                 pre_hash=self.prev_hash,
                 action_id=self.last_action_id,
@@ -237,332 +214,169 @@ class GeneralAgent:
                 pre_grid=self.prev_grid,
                 post_grid=arr,
                 diff_summary=diff_str,
-                clicked_obj_sig=self.last_clicked_sig,
                 step_idx=self.step_in_level,
             )
-            self.world_model.run_backtest(self.ledger.history)
-            self.rolling_turns.append(
-                f"S{self.step_in_level - 1}: A{self.last_action_id}{self.last_click_xy if self.last_action_id == 6 else ''} -> {diff_str}"
+            self.compactor.add_working_turn(
+                step_idx=self.step_in_level - 1,
+                action_str=f"A{self.last_action_id}{self.last_click_xy if self.last_action_id == 6 else ''}",
+                diff_str=diff_str,
             )
+            self.compactor.compact_if_needed(self.lineage_dag)
+            self.verifier_gate.observe_transition(delta_omega)
         else:
             curr_hash = compute_arena_hash(arr, self.processor.hud_masker)
-            self.ledger.state_visit_counts[curr_hash] = (
-                self.ledger.state_visit_counts.get(curr_hash, 0) + 1
-            )
+            self.ledger.state_visit_counts[curr_hash] = self.ledger.state_visit_counts.get(curr_hash, 0) + 1
             self.last_delta_omega = None
 
+        # ---------------------------------------------------------
+        # STAGE 4: NVIDIA AVO Trajectory Supervisor
+        # ---------------------------------------------------------
         self.supervisor.observe_state(curr_hash, self.last_action_id, self.step_in_level)
-
-        eff_vecs = self.hypotheses.get_effective_vectors(
-            enable_orthogonal=self.config.enable_orthogonal_completion
-        )
-        av_pos = self.hypotheses.locate_avatar(curr_entities)
-        if av_pos is not None:
-            self.visited_cells.add(av_pos)
-            self.hypotheses.interacted_object_centers.add(av_pos)
-            if self.last_delta_omega == 0 and self.last_action_id in eff_vecs:
-                dr, dc = eff_vecs[self.last_action_id]
-                blocked_rc = (av_pos[0] + dr, av_pos[1] + dc)
-                self.wall_cells.add(blocked_rc)
-                if 0 <= blocked_rc[0] < arr.shape[0] and 0 <= blocked_rc[1] < arr.shape[1]:
-                    w_color = int(arr[blocked_rc[0], blocked_rc[1]])
-                    if w_color != bg_color and w_color not in self.hypotheses.pushable_colors:
-                        self.hypotheses.wall_colors.add(w_color)
-
-        self.prev_grid = arr.copy()
-        self.prev_hash = curr_hash
-        self.last_clicked_sig = None
-
-        # 1. Check guarded macro queue (Franzen M2 interior-board change guard + expectation check)
-        queued = self.macro_queue.pop_next(
-            last_delta_omega=self.last_delta_omega,
-            guard_enabled=self.config.enable_action_guards,
-            current_hash=curr_hash,
-        )
-        if queued is not None:
-            q_act, q_data = queued
-            if q_act in avail and self.ledger.govern_action(
-                curr_hash, q_act, q_data.get("x", 0), q_data.get("y", 0), self.current_level
-            ):
-                self.last_action_id = q_act
-                self.last_click_xy = (q_data.get("x", 0), q_data.get("y", 0))
-                return q_act, q_data
-
-        # 2. AVO Supervisor + ACTION7 (UNDO) loop & dead-end trap recovery
-        move_disc_here = [a for a in avail if a in (1, 2, 3, 4)]
-        all_moves_dead = bool(move_disc_here) and all(
-            self.ledger.is_dead(curr_hash, a, 0, 0, self.current_level) for a in move_disc_here
-        )
-        if (
-            self.config.enable_undo_backtrack
-            and 7 in avail
-            and (
-                all_moves_dead
-                or self.ledger.is_in_loop()
-                or (self.config.enable_avo_supervisor and self.supervisor.escalation_tier >= 1)
-            )
-            and self.last_action_id != 7
-            and not self.ledger.is_dead(curr_hash, 7, 0, 0, self.current_level)
-        ):
-            if av_pos is not None:
-                self.wall_cells.add(av_pos)
+        if self.supervisor.should_force_undo(avail):
+            logger.info("[GeneralAgent] Supervisor enforced ACTION7 (Undo) rollback.")
             self.macro_queue.clear()
             self.last_action_id = 7
             self.last_click_xy = (0, 0)
+            self.prev_grid = arr.copy()
+            self.prev_hash = curr_hash
             return 7, {}
 
-        # 3. Pattern-Matching Click Solver when ACTION6 is the primary interaction or mismatches exist
-        if self.config.enable_pattern_click_solver and 6 in avail:
-            has_move_actions = any(a in avail for a in (1, 2, 3, 4))
-            if not has_move_actions:
-                pattern_click = self.world_model.plan_click_pattern_match(
-                    arr, curr_entities, curr_hash, self.ledger, self.current_level
-                )
-                if pattern_click is not None:
-                    act_id, data, obj_sig = pattern_click
-                    self.last_action_id = act_id
-                    self.last_click_xy = (data["x"], data["y"])
-                    self.last_clicked_sig = obj_sig
-                    return act_id, data
+        # ---------------------------------------------------------
+        # STAGE 5: Grounded Verifier Gate Check
+        # ---------------------------------------------------------
+        if self.verifier_gate.is_fail_closed():
+            logger.info("[GeneralAgent] Verifier Gate is FAIL-CLOSED; purging macro queue.")
+            self.macro_queue.clear()
 
-        # 4. Active Orthogonal Basis Probing: probe at most 1 vertical + 1 horizontal axis when basis is incomplete
-        move_discrete = [a for a in avail if a in (1, 2, 3, 4)]
-        has_basis = self.hypotheses.has_2d_movement_basis(
-            enable_orthogonal=self.config.enable_orthogonal_completion
+        # ---------------------------------------------------------
+        # STAGE 6: Guarded Macro Queue Execution
+        # ---------------------------------------------------------
+        queued = self.macro_queue.pop_next(
+            last_delta_omega=self.last_delta_omega,
+            guard_enabled=self.config.enable_action_guards,
         )
-        if not has_basis and self.step_in_level <= 6:
-            untried_moves = [
-                a
-                for a in self.ledger.get_untried_discrete_actions(
-                    curr_hash, move_discrete, self.current_level
-                )
-                if a not in eff_vecs
-            ]
-            if untried_moves:
-                chosen = untried_moves[0]
-                self.last_action_id = chosen
-                self.last_click_xy = (0, 0)
-                return chosen, {}
+        if queued is not None:
+            q_act, q_data = queued
+            if self.verifier_gate.verify(
+                action_id=q_act,
+                payload=q_data,
+                available_actions=avail,
+                state_hash=curr_hash,
+                ledger=self.ledger,
+                level_idx=self.current_level,
+            ):
+                self.last_action_id = q_act
+                self.last_click_xy = (q_data.get("x", 0), q_data.get("y", 0))
+                self.prev_grid = arr.copy()
+                self.prev_hash = curr_hash
+                return q_act, q_data
 
-        # 5. Invoke Local Open-Weight LLM + Live Python REPL (Tufa Duck / Franzen M2 / Schema style)
+        # ---------------------------------------------------------
+        # STAGE 7: LLM CodeAct REPL Program Synthesis
+        # ---------------------------------------------------------
         if self.config.enable_llm and (self.step_in_level % self.config.llm_call_interval == 0):
-            llm = LocalLLMRuntime.get_instance(self.config)
-            if llm.ensure_loaded():
-                prompt = self.build_repl_prompt(arr, avail, av_pos, diff_str, curr_hash)
-                decision = llm.infer_decision(prompt)
+            server_mgr = OfflineServerManager.get_instance(self.config)
+            if server_mgr.ensure_server_running():
+                obs_summary = self.processor.encode_compact_observation(arr)
+                mem_context = self.compactor.render_context(self.lineage_dag)
+                prompt = build_agent_prompt(
+                    level_idx=self.current_level,
+                    step_in_level=self.step_in_level,
+                    available_actions=avail,
+                    obs_summary=obs_summary,
+                    memory_context=mem_context,
+                    supervisor_active=self.supervisor.strategy_audit_active,
+                    last_diff=diff_str,
+                )
+                decision = server_mgr.infer_decision(prompt)
                 if decision:
-                    if isinstance(decision.get("thought"), str):
-                        self.hypotheses.add_reasoning_trace(
-                            self.step_in_level, self.current_level, decision["thought"]
-                        )
+                    thought = decision.get("thought", "")
+                    if thought:
+                        self.compactor.add_reasoning_trace(thought)
+
                     subgoal = decision.get("subgoal", "")
                     if subgoal == "CODEACT" and isinstance(decision.get("code"), str):
-                        repl_plan = self.repl.execute_codeact(
-                            code_str=decision["code"],
-                            grid=arr,
-                            prev_grid=self.prev_grid,
-                            av_pos=av_pos,
-                            bg_color=bg_color,
-                            entities=curr_entities,
-                            vectors=eff_vecs,
-                            avail_actions=avail,
-                            notes=self.hypotheses.persistent_notes,
-                            query_log_fn=self.ledger.query_history,
-                            register_wm_fn=self.world_model.register_custom_simulator,
-                        )
+                        env_ctx = {
+                            "grid": arr,
+                            "prev_grid": self.prev_grid,
+                            "avatar_pos": self.avatar_pos,
+                            "available_actions": avail,
+                            "entities": curr_entities,
+                            "notes": self.lineage_dag.persistent_notes,
+                            "query_log_fn": self.ledger.query_history,
+                        }
+                        plan = self.repl.execute_codeact(decision["code"], env_ctx)
+                        # Filter synthesized plan through Verifier Gate
                         valid_plan = [
                             (aid, pdata)
-                            for aid, pdata in repl_plan
-                            if aid in avail
-                            and self.ledger.govern_action(
-                                curr_hash,
-                                aid,
-                                pdata.get("x", 0),
-                                pdata.get("y", 0),
-                                self.current_level,
+                            for aid, pdata in plan
+                            if self.verifier_gate.verify(
+                                action_id=aid,
+                                payload=pdata,
+                                available_actions=avail,
+                                state_hash=curr_hash,
+                                ledger=self.ledger,
+                                level_idx=self.current_level,
                             )
                         ]
                         if valid_plan:
-                            first_aid, first_data = valid_plan[0]
+                            first_act, first_data = valid_plan[0]
                             if len(valid_plan) > 1:
                                 self.macro_queue.push_plan(
                                     valid_plan[1:],
-                                    subagent_tag="DUCK_REPL",
+                                    subagent_tag="CODEACT_REPL",
                                     max_len=self.config.max_repl_plan_len,
                                 )
-                            self.last_action_id = first_aid
-                            self.last_click_xy = (
-                                first_data.get("x", 0),
-                                first_data.get("y", 0),
-                            )
-                            return first_aid, first_data
-                    elif (
-                        subgoal == "NAVIGATE"
-                        and isinstance(decision.get("target_rc"), list)
-                        and av_pos
-                    ):
-                        tr, tc = int(decision["target_rc"][0]), int(decision["target_rc"][1])
-                        nav_plan = astar_grid(
-                            av_pos,
-                            (tr, tc),
-                            self.wall_cells,
-                            eff_vecs,
-                            arr.shape,
-                            portals=self.hypotheses.portal_map,
-                        )
-                        if nav_plan:
-                            first_aid = int(nav_plan[0])
-                            if self.ledger.govern_action(
-                                curr_hash, first_aid, 0, 0, self.current_level
-                            ):
-                                self.macro_queue.push_plan(nav_plan[1:], subagent_tag="LLM_NAV")
-                                self.last_action_id = first_aid
-                                self.last_click_xy = (0, 0)
-                                return first_aid, {}
-                    elif (
-                        subgoal == "CLICK"
-                        and 6 in avail
-                        and isinstance(decision.get("click_xy"), list)
-                    ):
-                        cx, cy = int(decision["click_xy"][0]), int(decision["click_xy"][1])
-                        if self.ledger.govern_action(curr_hash, 6, cx, cy, self.current_level):
-                            self.last_action_id = 6
-                            self.last_click_xy = (cx, cy)
-                            return 6, {"x": cx, "y": cy}
-                    elif subgoal == "ACTION" and isinstance(decision.get("action_id"), int):
-                        aid = int(decision["action_id"])
-                        if aid in avail and self.ledger.govern_action(
-                            curr_hash, aid, 0, 0, self.current_level
-                        ):
-                            self.last_action_id = aid
-                            self.last_click_xy = (0, 0)
-                            return aid, {}
+                            self.last_action_id = first_act
+                            self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
+                            self.prev_grid = arr.copy()
+                            self.prev_hash = curr_hash
+                            return first_act, first_data
 
-        # 6. Executable World-Model Goal/Switch/2D-Sokoban Route Planner (Schema / Tycho / OPINE-World)
-        if self.config.enable_world_model_bfs and av_pos is not None and eff_vecs:
-            wm_route = self.world_model.plan_interactive_route(
-                arr,
-                curr_entities,
-                av_pos,
-                self.wall_cells,
-                self.hypotheses.interacted_object_centers,
-                enable_sokoban=self.config.enable_sokoban_planner,
-                enable_2d_sokoban=self.config.enable_2d_sokoban_astar,
-                enable_orthogonal=self.config.enable_orthogonal_completion,
-            )
-            if wm_route:
-                first_act = int(wm_route[0])
-                if first_act in avail and self.ledger.govern_action(
-                    curr_hash, first_act, 0, 0, self.current_level
-                ):
-                    if len(wm_route) > 1:
-                        self.macro_queue.push_plan(
-                            wm_route[1:],
-                            subagent_tag="WORLD_MODEL_BFS",
-                            max_len=self.config.max_repl_plan_len,
-                        )
-                    self.last_action_id = first_act
-                    self.last_click_xy = (0, 0)
-                    return first_act, {}
-
-        # 7. Iterated Width IW(1) Model-Based Novelty Search when custom or induced simulator is active
-        if self.config.enable_iw_search and eff_vecs and self.world_model.custom_goal_fn is not None:
-            iw_plan = self.world_model.run_iw_search(
-                arr,
-                avail,
-                max_depth=10,
-                enable_orthogonal=self.config.enable_orthogonal_completion,
-            )
-            if iw_plan:
-                first_act = int(iw_plan[0])
-                if first_act in avail and self.ledger.govern_action(
-                    curr_hash, first_act, 0, 0, self.current_level
-                ):
-                    if len(iw_plan) > 1:
-                        self.macro_queue.push_plan(iw_plan[1:], subagent_tag="IW1_SEARCH")
-                    self.last_action_id = first_act
-                    self.last_click_xy = (0, 0)
-                    return first_act, {}
-
-        # 8. Spatial frontier exploration if movement vectors are known
-        if av_pos is not None and eff_vecs:
-            effective_walls = self.world_model.infer_obstacle_cells(
-                arr, curr_entities, self.wall_cells
-            )
-            frontier_plan = bfs_frontier_explore(
-                av_pos,
-                self.visited_cells,
-                effective_walls,
-                eff_vecs,
-                arr.shape,
-            )
-            if frontier_plan:
-                first_act = int(frontier_plan[0])
-                if first_act in avail and self.ledger.govern_action(
-                    curr_hash, first_act, 0, 0, self.current_level
-                ):
-                    if len(frontier_plan) > 1:
-                        self.macro_queue.push_plan(frontier_plan[1:], subagent_tag="FRONTIER_BFS")
-                    self.last_action_id = first_act
-                    self.last_click_xy = (0, 0)
-                    return first_act, {}
-
-        # 9. Graph-BFS to nearest state with unexplored discrete actions
-        all_discrete = [a for a in avail if a in (1, 2, 3, 4, 5)]
-        graph_plan = self.ledger.bfs_to_unexplored_action(
-            curr_hash, all_discrete, self.current_level, self.last_action_id
+        # ---------------------------------------------------------
+        # STAGE 8: General Interaction Explorer
+        # ---------------------------------------------------------
+        exp_act, exp_data = self.explorer.select_exploration_action(
+            grid=arr,
+            entities=curr_entities,
+            avatar_pos=self.avatar_pos,
+            available_actions=avail,
+            step_in_level=self.step_in_level,
+            state_hash=curr_hash,
+            ledger=self.ledger,
+            level_idx=self.current_level,
         )
-        if graph_plan:
-            first_act = int(graph_plan[0])
-            if len(graph_plan) > 1:
-                self.macro_queue.push_plan(graph_plan[1:], subagent_tag="GRAPH_BFS")
-            self.last_action_id = first_act
-            self.last_click_xy = (0, 0)
-            return first_act, {}
+        if self.verifier_gate.verify(
+            action_id=exp_act,
+            payload=exp_data,
+            available_actions=avail,
+            state_hash=curr_hash,
+            ledger=self.ledger,
+            level_idx=self.current_level,
+        ):
+            self.last_action_id = exp_act
+            self.last_click_xy = (exp_data.get("x", 0), exp_data.get("y", 0))
+            self.prev_grid = arr.copy()
+            self.prev_hash = curr_hash
+            return exp_act, exp_data
 
-        # 10. Smart Bayesian object-segmented click exploration when ACTION6 is available
-        if 6 in avail:
-            if self.config.enable_pattern_click_solver:
-                pattern_click = self.world_model.plan_click_pattern_match(
-                    arr, curr_entities, curr_hash, self.ledger, self.current_level
-                )
-                if pattern_click is not None:
-                    act_id, data, obj_sig = pattern_click
-                    self.last_action_id = act_id
-                    self.last_click_xy = (data["x"], data["y"])
-                    self.last_clicked_sig = obj_sig
-                    return act_id, data
-            act_id, data, obj_sig = self.click_explorer.select_click(
-                arr,
-                curr_hash,
-                self.ledger,
-                self.current_level,
-                bayesian_tracker=self.hypotheses.bayesian_tracker,
-                enable_bayesian=self.config.enable_bayesian_exploration,
-            )
-            if self.ledger.govern_action(
-                curr_hash, 6, data["x"], data["y"], self.current_level, obj_sig=obj_sig
-            ):
-                self.last_action_id = act_id
-                self.last_click_xy = (data["x"], data["y"])
-                self.last_clicked_sig = obj_sig
-                return act_id, data
-
-        # 11. Kepler No-Total-Coverage Fallback: novelty-biased discrete choice that NEVER deadlocks
+        # ---------------------------------------------------------
+        # STAGE 9: Novelty-Biased Discrete Fallback
+        # ---------------------------------------------------------
         candidate_disc = [a for a in avail if a in (1, 2, 3, 4, 5, 7)]
         if candidate_disc:
-            ranked_disc = sorted(
+            ranked = sorted(
                 candidate_disc,
                 key=lambda a: self.ledger.compute_action_penalty(
                     curr_hash, a, self.last_action_id, 0, 0, self.current_level
                 ),
             )
-            chosen = ranked_disc[0]
-            self.last_action_id = chosen
-            self.last_click_xy = (0, 0)
-            return chosen, {}
+            fallback_act = ranked[0]
+        else:
+            fallback_act = avail[0] if avail else 1
 
-        fallback_act = avail[0] if avail else 1
         self.last_action_id = fallback_act
         self.last_click_xy = (0, 0)
+        self.prev_grid = arr.copy()
+        self.prev_hash = curr_hash
         return fallback_act, {}
