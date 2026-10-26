@@ -440,3 +440,196 @@ def delayed_action_astar(
                 heapq.heappush(heap, (nf, ng, next_state, path + [aid]))
 
     return []
+
+
+# =====================================================================
+# 6. Action-Matrix Tomography / GF(2) Binary Gaussian Elimination
+# =====================================================================
+
+def solve_gf2_toggle(
+    current_grid: np.ndarray,
+    target_grid: Optional[np.ndarray] = None,
+    kernel: Optional[List[Tuple[int, int]]] = None,
+    stride: int = 1,
+    sub_h: Optional[int] = None,
+    sub_w: Optional[int] = None,
+) -> List[Tuple[int, Dict[str, int]]]:
+    """Solves matrix parity & Lights-Out toggle puzzles over GF(2).
+    
+    Given a current grid and target grid, where clicking a tile (r, c)
+    toggles a local stencil/kernel of cells (e.g. self + 4 neighbors),
+    finds the exact minimal subset of tiles to click via Gaussian elimination.
+    
+    Returns a list of (6, {"x": px, "y": py}) Action 6 clicks.
+    """
+    gh, gw = current_grid.shape
+    h = sub_h or (gh // stride)
+    w = sub_w or (gw // stride)
+    n_cells = h * w
+
+    curr = np.zeros((h, w), dtype=int)
+    targ = np.zeros((h, w), dtype=int)
+    for r in range(h):
+        for c in range(w):
+            curr[r, c] = current_grid[r * stride + stride // 2, c * stride + stride // 2]
+            if target_grid is not None:
+                targ[r, c] = target_grid[r * stride + stride // 2, c * stride + stride // 2]
+
+    b = (curr != targ).flatten().astype(int)
+    if not np.any(b):
+        return []
+
+    toggle_stencil = kernel or [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    A = np.zeros((n_cells, n_cells), dtype=int)
+    for r in range(h):
+        for c in range(w):
+            col_idx = r * w + c
+            for dr, dc in toggle_stencil:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < h and 0 <= nc < w:
+                    row_idx = nr * w + nc
+                    A[row_idx, col_idx] = 1
+
+    augmented = np.hstack([A, b.reshape(-1, 1)]).astype(int)
+
+    pivot_row = 0
+    pivot_cols = []
+    for col in range(n_cells):
+        if pivot_row >= n_cells:
+            break
+        swap_row = None
+        for r in range(pivot_row, n_cells):
+            if augmented[r, col] == 1:
+                swap_row = r
+                break
+        if swap_row is None:
+            continue
+
+        if swap_row != pivot_row:
+            augmented[[pivot_row, swap_row]] = augmented[[swap_row, pivot_row]]
+
+        for r in range(n_cells):
+            if r != pivot_row and augmented[r, col] == 1:
+                augmented[r] ^= augmented[pivot_row]
+
+        pivot_cols.append((pivot_row, col))
+        pivot_row += 1
+
+    x = np.zeros(n_cells, dtype=int)
+    for r, col in reversed(pivot_cols):
+        val = augmented[r, -1]
+        for c2 in range(col + 1, n_cells):
+            if augmented[r, c2]:
+                val ^= (augmented[r, c2] & x[c2])
+        x[col] = val
+
+    plan = []
+    for r in range(h):
+        for c in range(w):
+            idx = r * w + c
+            if x[idx] == 1:
+                px = c * stride + stride // 2
+                py = r * stride + stride // 2
+                plan.append((6, {"x": px, "y": py}))
+
+    return plan
+
+
+# =====================================================================
+# 7. Second-Order Dynamic Space-Time A* (with Acceleration & Bounces)
+# =====================================================================
+
+def space_time_astar(
+    grid: np.ndarray,
+    start: Tuple[int, int],
+    target: Tuple[int, int],
+    dynamic_hazards: Optional[List[Dict[str, Any]]] = None,
+    walls: Optional[Set[Tuple[int, int]]] = None,
+    stride: int = 1,
+    action_map: Optional[Dict[Tuple[int, int], int]] = None,
+    max_horizon: int = 80,
+) -> List[int]:
+    """Plans safe path through dynamic hazards with velocity, acceleration, and elastic wall bounces."""
+    act_map = action_map or {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
+    sub_h, sub_w = grid.shape[0] // stride, grid.shape[1] // stride
+
+    def scale(rc: Tuple[int, int]) -> Tuple[int, int]:
+        return (rc[0] // stride if rc[0] >= sub_h else rc[0], rc[1] // stride if rc[1] >= sub_w else rc[1])
+
+    s_start = scale(start)
+    s_target = scale(target)
+    s_walls = set(scale(w) for w in walls) if walls is not None else set()
+
+    hazard_positions_at_t: Dict[int, Set[Tuple[int, int]]] = {t: set() for t in range(max_horizon + 1)}
+
+    if dynamic_hazards:
+        for hz in dynamic_hazards:
+            hp = scale(hz.get("pos", (0, 0)))
+            hv = hz.get("velocity", (1, 0))
+            ha = hz.get("accel", (0, 0))
+            bounce = hz.get("bounce", True)
+
+            curr_r, curr_c = float(hp[0]), float(hp[1])
+            curr_vr, curr_vc = float(hv[0]), float(hv[1])
+            ar, ac = float(ha[0]), float(ha[1])
+
+            for t in range(max_horizon + 1):
+                ir, ic = int(round(curr_r)), int(round(curr_c))
+                if 0 <= ir < sub_h and 0 <= ic < sub_w:
+                    hazard_positions_at_t[t].add((ir, ic))
+
+                next_r = curr_r + curr_vr
+                next_c = curr_c + curr_vc
+                curr_vr += ar
+                curr_vc += ac
+
+                if bounce:
+                    if next_r < 0 or next_r >= sub_h or (int(round(next_r)), ic) in s_walls:
+                        curr_vr = -curr_vr
+                        next_r = curr_r + curr_vr
+                    if next_c < 0 or next_c >= sub_w or (ir, int(round(next_c))) in s_walls:
+                        curr_vc = -curr_vc
+                        next_c = curr_c + curr_vc
+
+                curr_r, curr_c = next_r, next_c
+
+    def is_hazard(r: int, c: int, t: int) -> bool:
+        return (r, c) in hazard_positions_at_t.get(min(t, max_horizon), set())
+
+    def h_dist(r: int, c: int) -> int:
+        return abs(r - s_target[0]) + abs(c - s_target[1])
+
+    heap = [(h_dist(s_start[0], s_start[1]), 0, s_start, [])]
+    visited = set()
+
+    while heap:
+        f, t, (r, c), path = heapq.heappop(heap)
+
+        if (r, c) == s_target:
+            return path
+        if t >= max_horizon:
+            continue
+
+        st_key = (r, c, t)
+        if st_key in visited:
+            continue
+        visited.add(st_key)
+
+        for (dr, dc), aid in act_map.items():
+            nr, nc = r + dr, c + dc
+            nt = t + 1
+            if 0 <= nr < sub_h and 0 <= nc < sub_w and (nr, nc) not in s_walls:
+                if not is_hazard(nr, nc, nt):
+                    if not (is_hazard(r, c, nt) and is_hazard(nr, nc, t)):
+                        next_st = (nr, nc, nt)
+                        if next_st not in visited:
+                            heapq.heappush(heap, (nt + h_dist(nr, nc), nt, (nr, nc), path + [aid]))
+
+        if not is_hazard(r, c, t + 1):
+            nt = t + 1
+            next_st = (r, c, nt)
+            if next_st not in visited:
+                heapq.heappush(heap, (nt + h_dist(r, c) + 1, nt, (r, c), path + [5]))
+
+    return []

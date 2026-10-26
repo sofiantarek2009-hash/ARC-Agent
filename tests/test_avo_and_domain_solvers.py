@@ -160,3 +160,103 @@ for a in plan:
     plan = repl.execute_codeact(code, env_ctx)
     assert len(plan) > 0, "REPL should execute sokoban_solver and return plan"
     assert plan[0][0] == 4, f"First action should be push RIGHT (4), got {plan[0][0]}"
+
+
+def test_gf2_toggle_solver_lights_out():
+    """Tests solve_gf2_toggle inverts Lights-Out toggle matrix via GF(2) elimination."""
+    from project_override.planning.domain_solvers import solve_gf2_toggle
+
+    # 3x3 grid: center cell needs to be toggled
+    # In standard Lights Out, clicking (1, 1) toggles (1, 1), (0, 1), (2, 1), (1, 0), (1, 2)
+    # If we want target_grid where (1, 1) and its 4 neighbors are 1,
+    # clicking (1, 1) should be the exact solution!
+    curr = np.zeros((3, 3), dtype=int)
+    targ = np.zeros((3, 3), dtype=int)
+    targ[1, 1] = 1
+    targ[0, 1] = 1
+    targ[2, 1] = 1
+    targ[1, 0] = 1
+    targ[1, 2] = 1
+
+    plan = solve_gf2_toggle(curr, targ, stride=1, sub_h=3, sub_w=3)
+    assert len(plan) == 1, f"Expected 1 click at center, got {len(plan)}: {plan}"
+    assert plan[0][0] == 6
+    assert plan[0][1]["x"] == 1 and plan[0][1]["y"] == 1, f"Expected click at (1, 1), got {plan[0][1]}"
+
+
+def test_space_time_astar_second_order_kinematics():
+    """Tests space_time_astar accounts for acceleration and elastic wall bounces."""
+    from project_override.planning.domain_solvers import space_time_astar
+
+    grid = np.zeros((10, 10), dtype=int)
+    start = (2, 2)
+    target = (2, 8)
+    # Hazard accelerating downwards and bouncing
+    hazards = [
+        {"pos": (2, 5), "velocity": (1, 0), "accel": (1, 0), "bounce": True}
+    ]
+
+    plan = space_time_astar(grid, start, target, dynamic_hazards=hazards)
+    assert len(plan) > 0, "Space-time A* should find a safe path dodging accelerated hazard"
+
+
+def test_keyframe_search_tree_mcts_backtracking():
+    """Tests KeyframeSearchTree computes exact backtrack steps to fork node."""
+    from project_override.execution.avo_supervisor import KeyframeSearchTree
+
+    tree = KeyframeSearchTree()
+    # Step 1: take action 1
+    n1 = tree.record_step(action=1, post_hash=101, step=1)
+    # Step 2: take action 2
+    n2 = tree.record_step(action=2, post_hash=102, step=2)
+    # Step 3: take action 3
+    n3 = tree.record_step(action=3, post_hash=103, step=3)
+
+    # 1. Backtrack 1 step to parent n2
+    steps = tree.compute_backtrack_to_fork()
+    assert steps == 1, f"Expected 1 backtrack step to immediate parent, got {steps}"
+
+    # Perform 1 undo: now at n2
+    tree.record_undo()
+    assert tree.current_node_id == n2
+
+    # 2. If n2 is exhausted ({1, 2, 3, 4}), it should climb to n1 (2 steps from n3)
+    # Re-advance to n3
+    tree.record_step(action=3, post_hash=103, step=3)
+    tree.nodes[n2].banned_actions = {1, 2, 3, 4}
+    steps_climbed = tree.compute_backtrack_to_fork()
+    assert steps_climbed == 2, f"Expected 2 backtrack steps to ancestor n1, got {steps_climbed}"
+
+
+def test_cegis_retrodiction_verifier():
+    """Tests CEGISRetrodictionVerifier validates 100% replay and catches counterexamples."""
+    from project_override.planning.verifier_gate import CEGISRetrodictionVerifier
+
+    cegis = CEGISRetrodictionVerifier()
+
+    s0 = np.zeros((5, 5), dtype=int)
+    s1 = s0.copy()
+    s1[2, 2] = 7  # transition effect
+
+    cegis.record_transition(step=1, level=0, pre_grid=s0, action=1, payload={}, post_grid=s1, delta_omega=1)
+
+    # Valid model
+    def correct_model(pre, act, payload):
+        res = pre.copy()
+        if act == 1:
+            res[2, 2] = 7
+        return res
+
+    is_cert, acc, cx = cegis.verify_transition_model(correct_model)
+    assert is_cert is True and acc == 1.0
+    assert cx is None
+
+    # Flawed model
+    def wrong_model(pre, act, payload):
+        return pre.copy()
+
+    is_cert_f, acc_f, cx_f = cegis.verify_transition_model(wrong_model)
+    assert is_cert_f is False and acc_f == 0.0
+    assert cx_f is not None
+    assert cx_f["coord"] == (2, 2)
+

@@ -290,7 +290,15 @@ class GeneralAgent:
                 diff_str=diff_str,
             )
             self.compactor.compact_if_needed(self.lineage_dag)
-            self.verifier_gate.observe_transition(delta_omega)
+            self.verifier_gate.observe_transition(
+                delta_omega=delta_omega,
+                step=self.step_in_level,
+                level=self.current_level,
+                pre_grid=self.prev_grid,
+                action=self.last_action_id,
+                payload={"x": self.last_click_xy[0], "y": self.last_click_xy[1]} if self.last_action_id == 6 else {},
+                post_grid=arr,
+            )
         else:
             curr_hash = compute_arena_hash(arr, self.processor.hud_masker)
             self.ledger.state_visit_counts[curr_hash] = self.ledger.state_visit_counts.get(curr_hash, 0) + 1

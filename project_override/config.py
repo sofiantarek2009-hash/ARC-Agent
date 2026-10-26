@@ -55,17 +55,19 @@ class AgentConfig:
     candidate_model_paths: List[str] = field(
         default_factory=lambda: [
             os.environ.get("ARC_LOCAL_MODEL_PATH", ""),
+            # 32B / 27B Frontier Models (Primary for 70%+ reasoning)
+            "/kaggle/input/models/qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1",
+            "/kaggle/input/qwen2.5-coder/transformers/32b-instruct-awq/1",
+            "/kaggle/input/qwen-2.5-coder-32b-instruct-awq",
+            "/kaggle/input/qwen3-8-27b-fp8",
+            "/kaggle/input/qwen3-6-27b-fp8",
+            "/kaggle/input/gemma-4-31b",
+            # High-speed drafting and secondary fallbacks
             "/kaggle/input/intel-qwen3-8-flash-next-w4a16-autoround",
             "/kaggle/input/models/dfranzen/intel-qwen3-8-flash-next-w4a16-autoround",
             "/kaggle/input/primitive-ai-qwen3-8-flash-next-mixed-nvfp4-fp8",
             "/kaggle/input/albucino-qwen3-8-flash-next-w4a16-fp8ple",
             "/kaggle/input/qwen3-8-flash-next-nvfp4",
-            "/kaggle/input/qwen3-8-27b-fp8",
-            "/kaggle/input/qwen3-6-27b-fp8",
-            "/kaggle/input/gemma-4-31b",
-            "/kaggle/input/models/qwen-lm/qwen2.5-coder/transformers/32b-instruct-awq/1",
-            "/kaggle/input/qwen2.5-coder/transformers/32b-instruct-awq/1",
-            "/kaggle/input/qwen-2.5-coder-32b-instruct-awq",
         ]
     )
     candidate_drafter_paths: List[str] = field(

@@ -16,6 +16,8 @@ from project_override.planning.domain_solvers import (
     escort_joint_astar,
     sokoban_solver,
     solve_circuit_flow,
+    solve_gf2_toggle,
+    space_time_astar,
     triangulate_beacon,
 )
 
@@ -166,14 +168,29 @@ class OfflineServerManager:
             drafter_path = self._resolve_drafter_path()
 
             # 3. Launch vLLM OpenAI API server as a managed subprocess
+            # Auto-detect multi-GPU tensor parallelism for 32B model on dual T4
+            n_gpus = 1
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    n_gpus = torch.cuda.device_count()
+            except Exception:
+                n_gpus = 1
+
             cmd = [
                 sys.executable, "-m", "vllm.entrypoints.openai.api_server",
                 "--model", model_path,
                 "--gpu-memory-utilization", str(self.config.vllm_gpu_memory_utilization),
-                "--max-model-len", "16384",
+                "--max-model-len", "8192",
                 "--port", "8000",
                 "--trust-remote-code",
             ]
+            if n_gpus > 1:
+                cmd.extend(["--tensor-parallel-size", str(n_gpus)])
+
+            if "awq" in model_path.lower():
+                cmd.extend(["--quantization", "awq"])
+
             if self.config.enable_prefix_caching:
                 cmd.append("--enable-prefix-caching")
 
@@ -520,6 +537,18 @@ class SandboxedCodeActREPL:
                 )
             return solve_circuit_flow(*args, **kwargs)
 
+        def gf2_wrap(*args, **kwargs):
+            if len(args) <= 2 and "current_grid" not in kwargs:
+                targ = args[0] if len(args) >= 1 else None
+                kern = args[1] if len(args) >= 2 else None
+                return solve_gf2_toggle(
+                    environment_context.get("grid"),
+                    target_grid=targ,
+                    kernel=kern,
+                    stride=environment_context.get("stride", 1),
+                )
+            return solve_gf2_toggle(*args, **kwargs)
+
         sandbox_globals = {
             "__builtins__": {
                 "range": range, "len": len, "enumerate": enumerate, "zip": zip,
@@ -532,6 +561,8 @@ class SandboxedCodeActREPL:
             "find_path": find_path,
             "sokoban_solver": sokoban_wrap,
             "solve_circuit_flow": circuit_wrap,
+            "solve_gf2_toggle": gf2_wrap,
+            "space_time_astar": space_time_astar,
             "triangulate_beacon": triangulate_beacon,
             "escort_joint_astar": escort_joint_astar,
             "delayed_action_astar": delayed_action_astar,
