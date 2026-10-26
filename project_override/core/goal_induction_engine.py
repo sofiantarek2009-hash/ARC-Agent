@@ -955,4 +955,41 @@ class DeltaGoalInductionEngine:
                 metadata={"cavity_cells": cavity_cells},
             )
 
+        elif best_hyp.category == GoalCategory.MATCHING_COVERAGE:
+            push_colors = best_hyp.metadata.get("pushable_colors", [])
+            plate_colors = best_hyp.metadata.get("plate_colors", [])
+            boxes = []
+            targets = []
+            for pc in push_colors:
+                for r, c in np.argwhere(grid == pc):
+                    boxes.append((int(r), int(c)))
+            for tc in plate_colors:
+                for r, c in np.argwhere(grid == tc):
+                    targets.append((int(r), int(c)))
+            return GoalGuidance(
+                category=GoalCategory.MATCHING_COVERAGE,
+                primary_waypoints=targets,
+                heuristic_distance=float(len(boxes)),
+                recommended_solver="SOKOBAN_SOLVER",
+                confidence=best_hyp.confidence,
+                description=best_hyp.description,
+                metadata={"boxes": boxes, "targets": targets},
+            )
+
+        elif best_hyp.category == GoalCategory.EXIT_REACH:
+            target_pt = best_hyp.metadata.get("target_point")
+            waypoints = [target_pt] if target_pt else []
+            h_dist = 0.0
+            if mover_pos and target_pt:
+                h_dist = float(abs(mover_pos[0] - target_pt[0]) + abs(mover_pos[1] - target_pt[1]))
+            return GoalGuidance(
+                category=GoalCategory.EXIT_REACH,
+                primary_waypoints=waypoints,
+                heuristic_distance=h_dist,
+                recommended_solver="ASTAR_EXIT",
+                confidence=best_hyp.confidence,
+                description=best_hyp.description,
+                metadata={"target_point": target_pt},
+            )
+
         return None

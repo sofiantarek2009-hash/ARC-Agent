@@ -11,6 +11,13 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.request
 from project_override.config import AgentConfig
+from project_override.planning.domain_solvers import (
+    delayed_action_astar,
+    escort_joint_astar,
+    sokoban_solver,
+    solve_circuit_flow,
+    triangulate_beacon,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +494,32 @@ class SandboxedCodeActREPL:
             else:
                 return bfs_single(start, tuple(target[:2]), hazards=hazards)
 
+        def sokoban_wrap(*args, **kwargs):
+            if len(args) == 2 and "boxes" not in kwargs:
+                bxs, tgts = args[0], args[1]
+                return sokoban_solver(
+                    environment_context.get("grid"),
+                    bxs,
+                    tgts,
+                    environment_context.get("avatar_pos"),
+                    stride=environment_context.get("stride", 1),
+                    bg_color=environment_context.get("bg_color", 0),
+                    floor_color=environment_context.get("floor_color"),
+                )
+            return sokoban_solver(*args, **kwargs)
+
+        def circuit_wrap(*args, **kwargs):
+            if len(args) == 2 and "grid" not in kwargs:
+                terms, tiles = args[0], args[1]
+                return solve_circuit_flow(
+                    terms,
+                    tiles,
+                    environment_context.get("grid"),
+                    stride=environment_context.get("stride", 1),
+                    bg_color=environment_context.get("bg_color", 0),
+                )
+            return solve_circuit_flow(*args, **kwargs)
+
         sandbox_globals = {
             "__builtins__": {
                 "range": range, "len": len, "enumerate": enumerate, "zip": zip,
@@ -497,6 +530,11 @@ class SandboxedCodeActREPL:
             "act": act,
             "note": note,
             "find_path": find_path,
+            "sokoban_solver": sokoban_wrap,
+            "solve_circuit_flow": circuit_wrap,
+            "triangulate_beacon": triangulate_beacon,
+            "escort_joint_astar": escort_joint_astar,
+            "delayed_action_astar": delayed_action_astar,
             "query_log": query_fn,
             "np": __import__("numpy"),
             "math": __import__("math"),

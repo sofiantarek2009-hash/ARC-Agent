@@ -25,6 +25,13 @@ from project_override.perception.observation_processor import (
     Entity,
     ObservationProcessor,
 )
+from project_override.planning.domain_solvers import (
+    delayed_action_astar,
+    escort_joint_astar,
+    sokoban_solver,
+    solve_circuit_flow,
+    triangulate_beacon,
+)
 from project_override.planning.general_explorer import (
     GeneralInteractionExplorer,
     MacroActionQueue,
@@ -292,7 +299,12 @@ class GeneralAgent:
         # ---------------------------------------------------------
         # STAGE 4: NVIDIA AVO Trajectory Supervisor
         # ---------------------------------------------------------
-        self.supervisor.observe_state(curr_hash, self.last_action_id, self.step_in_level)
+        prog_val = None
+        guidance = self.goal_inducer.get_goal_guidance(arr, mover_pos=self.avatar_pos)
+        if guidance and guidance.heuristic_distance is not None:
+            prog_val = -guidance.heuristic_distance
+
+        self.supervisor.observe_state(curr_hash, self.last_action_id, self.step_in_level, progress_val=prog_val)
         if self.supervisor.should_force_undo(avail):
             logger.info("[GeneralAgent] Supervisor enforced ACTION7 (Undo) rollback.")
             self.macro_queue.clear()
@@ -301,6 +313,17 @@ class GeneralAgent:
             self.prev_grid = arr.copy()
             self.prev_hash = curr_hash
             return 7, {}
+
+        if self.supervisor.should_force_reset(self.step_in_level, avail):
+            logger.info("[GeneralAgent] Supervisor enforced ACTION0 (Reset) checkpoint recovery.")
+            self.macro_queue.clear()
+            self.last_action_id = 0
+            self.last_click_xy = (0, 0)
+            self.prev_grid = arr.copy()
+            self.prev_hash = curr_hash
+            return 0, {}
+
+        avail = self.supervisor.filter_banned_actions(avail)
 
         # ---------------------------------------------------------
         # STAGE 5: Grounded Verifier Gate Check
@@ -394,6 +417,66 @@ class GeneralAgent:
                 self.prev_grid = arr.copy()
                 self.prev_hash = curr_hash
                 return q_act, q_data
+
+        # ---------------------------------------------------------
+        # STAGE 6.5: Direct Symbolic Domain Solver Dispatch
+        # ---------------------------------------------------------
+        if self.macro_queue.is_empty() and guidance is not None:
+            stride = self.detected_stride or self.processor.induce_stride(arr, canvas_bg, floor_color)
+            av_cell = (self.avatar_pos[0] // stride, self.avatar_pos[1] // stride) if self.avatar_pos else None
+
+            # 1. Sokoban push puzzle
+            if guidance.recommended_solver == "SOKOBAN_SOLVER" and av_cell and len(self.probed_directions) >= 2:
+                bxs = guidance.metadata.get("boxes", [])
+                tgts = guidance.metadata.get("targets", [])
+                if bxs and tgts:
+                    soko_plan = sokoban_solver(
+                        arr, bxs, tgts, av_cell,
+                        stride=stride,
+                        bg_color=canvas_bg,
+                        floor_color=floor_color,
+                        action_map=self.action_map,
+                    )
+                    if soko_plan:
+                        logger.info(f"[GeneralAgent] Sokoban solver synthesized {len(soko_plan)} push actions.")
+                        first_act = soko_plan[0]
+                        if len(soko_plan) > 1:
+                            self.macro_queue.push_plan([(a, {}) for a in soko_plan[1:]], subagent_tag="SOKOBAN_SOLVER")
+                        self.last_action_id = first_act
+                        self.last_click_xy = (0, 0)
+                        self.prev_grid = arr.copy()
+                        self.prev_hash = curr_hash
+                        return first_act, {}
+
+            # 2. Consumption / Exit Reach pathfinding
+            elif guidance.category in (GoalCategory.CONSUMPTION, GoalCategory.EXIT_REACH) and av_cell and len(self.probed_directions) >= 2:
+                scaled_wps = [(w[0] // stride, w[1] // stride) for w in guidance.primary_waypoints]
+                if scaled_wps:
+                    env_ctx = {
+                        "grid": arr,
+                        "prev_grid": self.prev_grid,
+                        "avatar_pos": av_cell,
+                        "targets": scaled_wps,
+                        "stride": stride,
+                        "bg_color": canvas_bg,
+                        "floor_color": floor_color,
+                        "action_map": self.action_map,
+                        "available_actions": avail,
+                    }
+                    path_plan = self.repl.execute_codeact(
+                        "plan = find_path(avatar_pos, targets)\nfor a in plan:\n    act(a)",
+                        env_ctx,
+                    )
+                    if path_plan:
+                        first_act, first_data = path_plan[0]
+                        if len(path_plan) > 1:
+                            self.macro_queue.push_plan(path_plan[1:], subagent_tag="INVARIANT_GOAL_ASTAR")
+                        logger.info(f"[GeneralAgent] Invariant Goal A* dispatched {len(path_plan)} actions.")
+                        self.last_action_id = first_act
+                        self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
+                        self.prev_grid = arr.copy()
+                        self.prev_hash = curr_hash
+                        return first_act, first_data
 
         # ---------------------------------------------------------
         # STAGE 7: LLM CodeAct REPL Program Synthesis

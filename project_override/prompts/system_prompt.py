@@ -9,10 +9,15 @@ Your goal is to infer the game's rules with minimal actions, plan optimal soluti
 INTERACTIVE TOOLS (Available in Python code):
 - act(action_id, x=0, y=0): Executes action.
     action_id in [1, 2, 3, 4]: Directional movement (e.g. North, South, West, East)
-    action_id = 5: Interact / Trigger / Pulse
+    action_id = 5: Interact / Trigger / Pulse / Wait
     action_id = 6: Coordinate click at grid position (x, y)
     action_id = 7: Undo / rollback previous action (if available)
-- find_path(start, target) -> List[int]: Returns the optimal list of directional actions [a1, a2, ...] to navigate from start (r, c) to target (r, c) on the passable grid floor without hitting walls.
+- find_path(start, target, hazards=None) -> List[int]: Returns optimal directional actions [a1, a2, ...] to navigate from start to target on the passable grid floor. Supports multiple targets (TSP tour) and dynamic falling hazards in (r, c, t) space-time.
+- sokoban_solver(boxes, targets, avatar_pos=None) -> List[int]: Computes exact push action sequence to place all boxes onto targets, pruning concave corner and line deadlocks.
+- solve_circuit_flow(terminals, rotatable_tiles) -> List[Tuple[int, dict]]: Solves pipe/circuit tile rotations to connect source and sink terminals via Action 6 clicks.
+- triangulate_beacon(probes) -> Tuple[int, int]: Triangulates exact hidden goal coordinates from 3+ Manhattan distance probes [(r, c, dist), ...].
+- escort_joint_astar(avatar_pos, escort_pos, goal_pos, walls) -> List[int]: Computes actions for coupled escort movement in joint product space.
+- delayed_action_astar(start_pos, goal_pos, walls, delay_k=3) -> List[int]: Computes actions for delayed-action pipeline queues.
 - note(key, value): Stores a persistent rule or discovery across turns.
 - query_log(n=5): Retrieves recent historical transitions with diffs.
 
