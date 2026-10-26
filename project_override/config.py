@@ -36,7 +36,7 @@ class AgentConfig:
     # LLM & CodeAct Serving
     enable_llm: bool = os.environ.get("ARC_ENABLE_LLM", "1") == "1"
     llm_call_interval: int = int(os.environ.get("ARC_LLM_INTERVAL", "1"))
-    llm_timeout_s: float = float(os.environ.get("ARC_LLM_TIMEOUT_S", "8.0"))
+    llm_timeout_s: float = float(os.environ.get("ARC_LLM_TIMEOUT_S", "30.0"))
     llm_max_new_tokens: int = int(os.environ.get("ARC_LLM_MAX_TOKENS", "512"))
     vllm_launch_timeout_s: float = float(os.environ.get("ARC_VLLM_LAUNCH_TIMEOUT_S", "300.0"))
     vllm_gpu_memory_utilization: float = float(os.environ.get("ARC_VLLM_GPU_UTIL", "0.92"))

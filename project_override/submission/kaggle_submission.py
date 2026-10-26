@@ -258,11 +258,17 @@ def run_offline_evaluation(
             failure_reason = str(exc)
             logger.warning(f"Game {gid} isolated exception: {exc}")
 
-        total_lvls = max(5, levels_cleared)
-        padded_actions: List[Optional[int]] = list(level_actions_list) + [None] * max(
-            0, total_lvls - len(level_actions_list)
-        )
-        baselines = [12 + 3 * i for i in range(total_lvls)]
+        official_baselines = getattr(getattr(env, "environment_info", None), "baseline_actions", None)
+        if official_baselines:
+            baselines = list(official_baselines)
+            total_lvls = len(baselines)
+            padded_actions = list(level_actions_list) + [None] * max(0, total_lvls - len(level_actions_list))
+        else:
+            total_lvls = max(5, levels_cleared)
+            padded_actions: List[Optional[int]] = list(level_actions_list) + [None] * max(
+                0, total_lvls - len(level_actions_list)
+            )
+            baselines = [12 + 3 * i for i in range(total_lvls)]
         game_score = compute_game_rhae(padded_actions, baselines)
         agent.scheduler.games_completed += 1
         results_per_game.append(

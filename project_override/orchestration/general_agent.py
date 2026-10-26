@@ -4,6 +4,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from project_override.config import AgentConfig
+from project_override.core.goal_induction_engine import (
+    DeltaGoalInductionEngine as DeltaGoalInducer,
+    GoalCategory,
+    SolvedLevelMemory,
+)
 from project_override.execution.avo_supervisor import (
     AVOSupervisor,
     DPrimeComputeScheduler,
@@ -76,6 +81,10 @@ class GeneralAgent:
         self.detected_stride: Optional[int] = None
         self.action_map: Dict[Tuple[int, int], int] = {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
         self.probed_directions: Set[int] = set()
+        self.goal_inducer = DeltaGoalInducer()
+        self.solved_level_memory = SolvedLevelMemory()
+        self.level_initial_grid: Optional[np.ndarray] = None
+        self.inferred_goal_targets: List[Tuple[int, int]] = []
 
     def reset_game(self) -> None:
         self.current_level = 0
@@ -91,6 +100,10 @@ class GeneralAgent:
         self.detected_stride = None
         self.action_map = {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
         self.probed_directions.clear()
+        self.goal_inducer = DeltaGoalInducer()
+        self.solved_level_memory = SolvedLevelMemory()
+        self.level_initial_grid = None
+        self.inferred_goal_targets.clear()
         self.ledger.reset_level(clear_deaths=True)
         self.lineage_dag = LineageDAG()
         self.compactor.reset_level()
@@ -105,6 +118,22 @@ class GeneralAgent:
         self.lineage_dag.on_level_clear(self.current_level, self.step_in_level)
         self.compactor.on_level_clear(self.current_level, self.lineage_dag)
         
+        # Causal win invariant crystallization
+        if self.level_initial_grid is not None and self.prev_grid is not None:
+            try:
+                win_inv = self.goal_inducer.extract_causal_invariant(
+                    terminal_grid=self.prev_grid,
+                    level_initial_grid=self.level_initial_grid,
+                )
+                if win_inv:
+                    self.solved_level_memory.register_solved_level(
+                        level_num=self.current_level,
+                        invariant=win_inv,
+                        winning_actions=self.step_in_level,
+                    )
+            except Exception as e:
+                logger.debug(f"[GeneralAgent] Goal crystallization error: {e}")
+
         self.current_level = new_level
         self.step_in_level = 0
         self.prev_grid = None
@@ -113,6 +142,7 @@ class GeneralAgent:
         self.last_delta_omega = None
         self.avatar_pos = None
         self.wall_cells.clear()
+        self.level_initial_grid = None
         self.ledger.reset_level(clear_deaths=False)
         self.macro_queue.clear()
         self.supervisor.reset_level()
@@ -173,6 +203,8 @@ class GeneralAgent:
 
         self.step_in_game += 1
         self.step_in_level += 1
+        if self.step_in_level == 1:
+            self.level_initial_grid = arr.copy()
 
         canvas_bg, floor_color = self.processor.induce_canvas_and_floor(arr)
         curr_entities = self.processor.extract_entities(arr, bg_color=canvas_bg, floor_color=floor_color)
@@ -184,6 +216,18 @@ class GeneralAgent:
             delta_omega = self.processor.compute_delta_omega(self.prev_grid, arr)
             self.last_delta_omega = delta_omega
             diff_str = self.processor.summarize_transition(self.prev_grid, arr, anim_frames)
+
+            # Update delta-driven goal inducer
+            try:
+                self.goal_inducer.observe_transition(
+                    prev_grid=self.prev_grid,
+                    curr_grid=arr,
+                    action=self.last_action_id,
+                    mover_curr=self.avatar_pos,
+                    level_cleared=False,
+                )
+            except Exception:
+                pass
 
             # Update avatar position & movement kinematics
             kin = self.processor.extract_transition_kinematics(self.prev_grid, arr)
@@ -266,6 +310,44 @@ class GeneralAgent:
             self.macro_queue.clear()
 
         # ---------------------------------------------------------
+        # UPGRADE 5: Solved-Level Fast Replay (Levels 2–7)
+        # ---------------------------------------------------------
+        if self.current_level > 0 and self.macro_queue.is_empty():
+            stride = self.detected_stride or self.processor.induce_stride(arr, canvas_bg, floor_color)
+            av_cell = (self.avatar_pos[0] // stride, self.avatar_pos[1] // stride) if self.avatar_pos else None
+            _, _, detected_items = self.processor.render_ascii_stride_grid(
+                arr, canvas_bg, floor_color, avatar_pos=self.avatar_pos, stride=stride
+            )
+            targets = [(r, c) for r, c, tag in detected_items]
+            if av_cell and targets:
+                env_ctx = {
+                    "grid": arr,
+                    "prev_grid": self.prev_grid,
+                    "avatar_pos": av_cell,
+                    "targets": targets,
+                    "stride": stride,
+                    "bg_color": canvas_bg,
+                    "floor_color": floor_color,
+                    "action_map": self.action_map,
+                    "available_actions": avail,
+                    "entities": curr_entities,
+                }
+                replay_plan = self.repl.execute_codeact(
+                    "plan = find_path(avatar_pos, targets)\nfor a in plan:\n    act(a)",
+                    env_ctx,
+                )
+                if replay_plan:
+                    first_act, first_data = replay_plan[0]
+                    if len(replay_plan) > 1:
+                        self.macro_queue.push_plan(replay_plan[1:], subagent_tag="SOLVED_LEVEL_COMPILATION")
+                    logger.info(f"[GeneralAgent] Solved-Level Fast Replay dispatched {len(replay_plan)} actions for Level {self.current_level}.")
+                    self.last_action_id = first_act
+                    self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return first_act, first_data
+
+        # ---------------------------------------------------------
         # STAGE 5.5: Level 1 Epistemic Cardinal Probe (Turns 1..4)
         # ---------------------------------------------------------
         if self.current_level <= 1 and self.step_in_level <= 4 and self.macro_queue.is_empty():
@@ -290,10 +372,11 @@ class GeneralAgent:
                     return probe_act, {}
 
         # ---------------------------------------------------------
-        # STAGE 6: Guarded Macro Queue Execution
+        # STAGE 6: Guarded Macro Queue Execution (Closed-Loop Sahu Rollback)
         # ---------------------------------------------------------
         queued = self.macro_queue.pop_next(
             last_delta_omega=self.last_delta_omega,
+            curr_state_hash=curr_hash,
             guard_enabled=self.config.enable_action_guards,
         )
         if queued is not None:
@@ -335,6 +418,9 @@ class GeneralAgent:
                     memory_context=mem_context,
                     supervisor_active=self.supervisor.strategy_audit_active,
                     last_diff=diff_str,
+                    action_map=self.action_map if len(self.probed_directions) >= 2 else None,
+                    targets=targets if targets else None,
+                    avatar_pos=av_cell,
                 )
                 decision = server_mgr.infer_decision(prompt)
                 if decision:

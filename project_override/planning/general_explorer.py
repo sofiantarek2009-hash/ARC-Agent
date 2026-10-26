@@ -43,9 +43,10 @@ def astar_grid(
 
 
 class MacroActionQueue:
-    """Buffers sequential actions with Franzen M2 interior-change guards."""
+    """Buffers sequential actions with Franzen M2 interior-change guards and Closed-Loop Sahu Rollback."""
     def __init__(self):
         self.queue: deque = deque()
+        self.expected_hashes: deque = deque()
         self.active_subagent: str = "DIRECT"
 
     def is_empty(self) -> bool:
@@ -56,6 +57,7 @@ class MacroActionQueue:
 
     def clear(self) -> None:
         self.queue.clear()
+        self.expected_hashes.clear()
         self.active_subagent = "DIRECT"
 
     def push_plan(
@@ -63,27 +65,41 @@ class MacroActionQueue:
         plan: List[Tuple[int, Dict[str, Any]]],
         subagent_tag: str = "MACRO",
         max_len: int = 18,
+        expected_hashes: Optional[List[int]] = None,
     ) -> None:
         self.queue.clear()
+        self.expected_hashes.clear()
         self.active_subagent = subagent_tag
         for item in plan[:max_len]:
             if isinstance(item, int):
                 self.queue.append((item, {}))
             elif isinstance(item, tuple) and len(item) == 2:
                 self.queue.append(item)
+        if expected_hashes:
+            for h in expected_hashes[:max_len]:
+                self.expected_hashes.append(h)
 
     def pop_next(
         self,
         last_delta_omega: Optional[int] = None,
+        curr_state_hash: Optional[int] = None,
         guard_enabled: bool = True,
     ) -> Optional[Tuple[int, Dict[str, Any]]]:
         if not self.queue:
             return None
-        # Guard: if the preceding macro action was an unexpected NO-OP, purge the hallucinated queue
+        # Closed-Loop Sahu Instant Rollback:
+        # If the preceding macro action was an unexpected NO-OP (ΔΩ=0), purge immediately
         if guard_enabled and last_delta_omega == 0:
-            logger.info(f"[MacroActionQueue] Unexpected NO-OP detected. Purging remaining {len(self.queue)} queued macro actions.")
+            logger.info(f"[MacroActionQueue] Closed-Loop Sahu Rollback: ΔΩ=0. Purging remaining {len(self.queue)} actions.")
             self.clear()
             return None
+        # State divergence rollback
+        if guard_enabled and curr_state_hash is not None and self.expected_hashes:
+            exp_hash = self.expected_hashes.popleft()
+            if exp_hash is not None and exp_hash != curr_state_hash:
+                logger.info(f"[MacroActionQueue] Closed-Loop Sahu Rollback: State hash diverged ({curr_state_hash} != {exp_hash}). Purging queue.")
+                self.clear()
+                return None
         return self.queue.popleft()
 
 

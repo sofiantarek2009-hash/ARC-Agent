@@ -286,8 +286,9 @@ class SandboxedCodeActREPL:
 
         query_fn = environment_context.get("query_log_fn", lambda n=5: [])
 
-        def bfs_single(start: Tuple[int, int], target: Tuple[int, int]) -> List[int]:
+        def bfs_single(start: Tuple[int, int], target: Tuple[int, int], hazards: Optional[List[Any]] = None) -> List[int]:
             from collections import deque
+            import heapq
             import numpy as np
             grid = environment_context.get("grid")
             if grid is None:
@@ -314,31 +315,112 @@ class SandboxedCodeActREPL:
                 for c in range(sub_w):
                     grid_stride[r, c] = grid[r * stride + stride // 2, c * stride + stride // 2]
 
-            q = deque([(start, [])])
-            visited = {start}
-            while q:
-                (r, c), path = q.popleft()
+            # Dead-square set (Sokoban concave corner protection)
+            dead_squares = set()
+            walls_set = {(r, c) for r in range(sub_h) for c in range(sub_w) if grid_stride[r, c] == bg}
+            for (dr1, dc1), (dr2, dc2) in [((-1, 0), (0, -1)), ((-1, 0), (0, 1)), ((1, 0), (0, -1)), ((1, 0), (0, 1))]:
+                for r in range(sub_h):
+                    for c in range(sub_w):
+                        if (r, c) not in walls_set and (r, c) != target:
+                            if (r + dr1, c + dc1) in walls_set and (r + dr2, c + dc2) in walls_set:
+                                dead_squares.add((r, c))
+
+            # Dynamic hazard projection: (hr, hc, vdr, vdc)
+            dynamic_hazards = []
+            hz_candidates = hazards if hazards is not None else environment_context.get("moving_hazards", [])
+            for h in hz_candidates:
+                if isinstance(h, dict):
+                    hp = h.get("pos", (0, 0))
+                    hv = h.get("velocity", (1, 0))
+                    hr = hp[0] // stride if hp[0] >= sub_h else hp[0]
+                    hc = hp[1] // stride if hp[1] >= sub_w else hp[1]
+                    dynamic_hazards.append((hr, hc, hv[0], hv[1]))
+                elif isinstance(h, (tuple, list)) and len(h) >= 2:
+                    hr = h[0] // stride if h[0] >= sub_h else h[0]
+                    hc = h[1] // stride if h[1] >= sub_w else h[1]
+                    vdr = h[2] if len(h) >= 4 else 1
+                    vdc = h[3] if len(h) >= 4 else 0
+                    dynamic_hazards.append((hr, hc, vdr, vdc))
+
+            # If no dynamic hazards, use fast standard BFS
+            if not dynamic_hazards:
+                q = deque([(start, [])])
+                visited = {start}
+                while q:
+                    (r, c), path = q.popleft()
+                    if (r, c) == target:
+                        return path
+                    for (dr, dc), aid in action_map.items():
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < sub_h and 0 <= nc < sub_w and (nr, nc) not in visited:
+                            val = grid_stride[nr, nc]
+                            if (nr, nc) == target or val != bg:
+                                visited.add((nr, nc))
+                                q.append(((nr, nc), path + [aid]))
+                return []
+
+            # Dynamic Space-Time A* Search over (r, c, t)
+            def is_hazard_at(r: int, c: int, t: int) -> bool:
+                for hr, hc, vdr, vdc in dynamic_hazards:
+                    pos_r = (hr + vdr * t) % sub_h
+                    pos_c = (hc + vdc * t) % sub_w
+                    if pos_r == r and pos_c == c:
+                        return True
+                return False
+
+            h0 = abs(start[0] - target[0]) + abs(start[1] - target[1])
+            heap = [(h0, 0, start, [])]
+            visited_st = set()
+            max_horizon = 80
+
+            while heap:
+                f, t, (r, c), path = heapq.heappop(heap)
                 if (r, c) == target:
                     return path
+                if t >= max_horizon:
+                    continue
+                st_key = (r, c, t % max(1, sub_h))
+                if st_key in visited_st:
+                    continue
+                visited_st.add(st_key)
+
+                # 1. Cardinal directional moves
                 for (dr, dc), aid in action_map.items():
                     nr, nc = r + dr, c + dc
-                    if 0 <= nr < sub_h and 0 <= nc < sub_w and (nr, nc) not in visited:
+                    nt = t + 1
+                    if 0 <= nr < sub_h and 0 <= nc < sub_w:
                         val = grid_stride[nr, nc]
-                        if (nr, nc) == target or val != bg:
-                            visited.add((nr, nc))
-                            q.append(((nr, nc), path + [aid]))
+                        if ((nr, nc) == target or val != bg) and not is_hazard_at(nr, nc, nt):
+                            # Vertex & swap collision checks
+                            if not (is_hazard_at(r, c, nt) and is_hazard_at(nr, nc, t)):
+                                next_st = (nr, nc, nt % max(1, sub_h))
+                                if next_st not in visited_st:
+                                    h_cost = abs(nr - target[0]) + abs(nc - target[1])
+                                    heapq.heappush(heap, (nt + h_cost, nt, (nr, nc), path + [aid]))
+
+                # 2. Wait in place (Action 5) to let falling hazard pass
+                if not is_hazard_at(r, c, t + 1):
+                    nt = t + 1
+                    next_st = (r, c, nt % max(1, sub_h))
+                    if next_st not in visited_st:
+                        avail = environment_context.get("available_actions", [1, 2, 3, 4, 5])
+                        wait_act = 5 if 5 in avail else 5
+                        h_cost = abs(r - target[0]) + abs(c - target[1])
+                        heapq.heappush(heap, (nt + h_cost + 1, nt, (r, c), path + [wait_act]))
+
             return []
 
-        def find_path(start: Tuple[int, int], target: Any) -> List[int]:
-            """General 2D pathfinder. Accepts single (r, c) target or list of [(r, c), ...] targets.
-            When multiple targets are given, computes the exact minimal tour via Held-Karp Metric TSP.
+        def find_path(start: Tuple[int, int], target: Any, hazards: Optional[List[Any]] = None) -> List[int]:
+            """General 2D & 3D Space-Time pathfinder. Accepts single (r, c) target or list of targets.
+            When multiple targets are given, computes minimal tour via Held-Karp Metric TSP.
+            When dynamic hazards exist, plans in (r, c, t) space to dodge falling hazards and moving blocks.
             """
             if not target:
                 return []
             if isinstance(target, list) and target and isinstance(target[0], (tuple, list)):
                 targets = [tuple(t[:2]) for t in target]
                 if len(targets) == 1:
-                    return bfs_single(start, targets[0])
+                    return bfs_single(start, targets[0], hazards=hazards)
                 if len(targets) > 8:
                     targets = targets[:8]
                 nodes = [start] + targets
@@ -350,7 +432,7 @@ class SandboxedCodeActREPL:
                     for j in range(k):
                         if i == j:
                             continue
-                        p = bfs_single(nodes[i], nodes[j])
+                        p = bfs_single(nodes[i], nodes[j], hazards=hazards)
                         if p or nodes[i] == nodes[j]:
                             dist_matrix[i][j] = len(p)
                             pair_paths[(i, j)] = p
@@ -403,7 +485,7 @@ class SandboxedCodeActREPL:
                     curr_node = orig_target_node
                 return full_actions
             else:
-                return bfs_single(start, tuple(target[:2]))
+                return bfs_single(start, tuple(target[:2]), hazards=hazards)
 
         sandbox_globals = {
             "__builtins__": {

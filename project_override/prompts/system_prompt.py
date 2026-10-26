@@ -53,15 +53,33 @@ def build_agent_prompt(
     memory_context: str,
     supervisor_active: bool = False,
     last_diff: str = "INITIAL_FRAME",
+    action_map: Optional[Dict[Tuple[int, int], int]] = None,
+    targets: Optional[List[Tuple[int, int]]] = None,
+    avatar_pos: Optional[Tuple[int, int]] = None,
 ) -> str:
     """Builds a grounded, compact prompt for the CodeAct LLM."""
     audit_part = SUPERVISOR_AUDIT_NOTICE if supervisor_active else ""
+    grounded_part = ""
+    if action_map and targets and avatar_pos:
+        grounded_part = (
+            f"--- KINEMATICS & TARGETS VERIFIED ---\n"
+            f"Action-to-Displacement Map: {action_map}\n"
+            f"Avatar Grid Position: {avatar_pos}\n"
+            f"Targets to Gather/Reach: {targets}\n"
+            f"CRITICAL: Do NOT guess moves or probe blindly. Use find_path(avatar_pos, targets) to solve:\n"
+            f"```python\n"
+            f"plan = find_path(avatar_pos, targets)\n"
+            f"for a in plan:\n"
+            f"    act(a)\n"
+            f"```\n\n"
+        )
     return (
         f"{SYSTEM_PROMPT}\n"
         f"--- CURRENT STATE ---\n"
         f"LEVEL: {level_idx} | STEP: {step_in_level} | AVAILABLE_ACTIONS: {available_actions}\n"
         f"LAST_TRANSITION: {last_diff}\n"
         f"{audit_part}\n"
+        f"{grounded_part}"
         f"{memory_context}\n\n"
         f"### OBSERVATION:\n{obs_summary}\n\n"
         f"Write a ```python ... ``` block calling act() to execute your next action(s):"

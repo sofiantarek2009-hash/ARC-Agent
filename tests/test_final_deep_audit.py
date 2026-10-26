@@ -26,7 +26,7 @@ from project_override.orchestration.general_agent import GeneralAgent
 from project_override.perception.observation_processor import ObservationProcessor, Entity
 from project_override.memory.action_ledger import ActionLedger, compute_arena_hash
 from project_override.memory.hypothesis_store import HypothesisStore
-from project_override.planning.planner import astar_grid, MacroActionQueue
+from project_override.planning.general_explorer import astar_grid, MacroActionQueue
 from project_override.planning.explorer import bfs_frontier_explore, SmartClickExplorer
 from project_override.llm.local_runtime import LocalLLMRuntime, parse_llm_response
 from project_override.llm.repl import SandboxedREPL
