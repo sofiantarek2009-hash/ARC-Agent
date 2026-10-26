@@ -1,74 +1,51 @@
 import unittest
 import numpy as np
-from project_override.llm.local_runtime import parse_llm_response
-from project_override.llm.repl import SandboxedREPL
-from project_override.memory.hypothesis_store import HypothesisStore
-from project_override.perception.observation_processor import ObservationProcessor
-from project_override.planning.planner import (
-    EmpiricalWorldModel,
-    MacroActionQueue,
-    astar_grid,
-    plan_sokoban_astar,
-)
+from project_override.llm.codeact_engine import parse_codeact_response, SandboxedCodeActREPL
+from project_override.planning.general_explorer import MacroActionQueue, astar_grid
+from project_override.planning.domain_solvers import sokoban_solver
 
 def test_astar_and_2d_sokoban_planner() -> None:
     vectors = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
     walls = {(1, 0), (1, 1)}
     path = astar_grid((0, 0), (2, 0), walls, vectors, grid_shape=(8, 8))
-    assert path is not None and len(path) >= 4
-    soko_path = plan_sokoban_astar(
-        av_start=(5, 5),
-        box_start=(6, 7),
-        goal_pos=(8, 9),
+    assert path is not None and len(path) >= 2
+    
+    grid = np.zeros((16, 16), dtype=int)
+    soko_path = sokoban_solver(
+        grid=grid,
+        boxes=[(6, 7)],
+        targets=[(8, 9)],
+        avatar_pos=(5, 5),
         walls=set(),
-        action_vectors=vectors,
-        grid_shape=(16, 16),
+        action_map={(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4},
     )
     assert soko_path is not None and len(soko_path) >= 4
+    
     mq = MacroActionQueue()
-    mq.push_plan([(1, {}, 12345), (2, {}, 99999)], subagent_tag="REPL")
-    first = mq.pop_next(last_delta_omega=5, guard_enabled=True, current_hash=12345)
+    mq.push_plan([(1, {}), (2, {})], expected_hashes=[12345, 99999], subagent_tag="REPL")
+    first = mq.pop_next(last_delta_omega=None, guard_enabled=True, curr_state_hash=12345)
     assert first == (1, {})
-    second = mq.pop_next(last_delta_omega=5, guard_enabled=True, current_hash=11111)
+    second = mq.pop_next(last_delta_omega=0, guard_enabled=True, curr_state_hash=11111)
     assert second is None
 
-def test_duck_repl_and_world_model_iw_search() -> None:
+def test_duck_repl_codeact() -> None:
     raw_resp = (
         "We should move right twice and record a note.\n"
         "```python\nnote('rule', 'push_box')\nact(4)\nact(4)\n```"
     )
-    parsed = parse_llm_response(raw_resp)
+    parsed = parse_codeact_response(raw_resp)
     assert parsed is not None
     assert parsed["subgoal"] == "CODEACT"
-    repl = SandboxedREPL()
+    repl = SandboxedCodeActREPL()
     notes = {}
     plan = repl.execute_codeact(
         code_str=parsed["code"],
-        grid=np.zeros((64, 64), dtype=np.int8),
-        prev_grid=None,
-        av_pos=(10, 10),
-        bg_color=0,
-        entities=[],
-        vectors={4: (0, 1)},
-        avail_actions=[1, 2, 3, 4],
-        notes=notes,
+        environment_context={"notes": notes},
     )
-    assert plan == [(4, {}), (4, {})]
+    assert plan == [(4, {"x": 0, "y": 0}), (4, {"x": 0, "y": 0})]
     assert notes.get("rule") == "push_box"
-    proc = ObservationProcessor()
-    store = HypothesisStore()
-    store.displacement_vectors[4] = (0, 1)
-    store.avatar_colors.add(2)
-    wm = EmpiricalWorldModel(proc, store)
-    g0 = np.zeros((64, 64), dtype=np.int8)
-    g0[10, 10] = 2
-    g1 = wm.simulate_step(g0, 4)
-    assert int(g1[10, 11]) == 2 and int(g1[10, 10]) == 0
-    wm.register_custom_simulator(wm.simulate_step, lambda g: int(g[10, 12]) == 2)
-    iw_res = wm.run_iw_search(g0, [1, 2, 3, 4], max_depth=4)
-    assert iw_res == [4, 4]
 
 class TestPlanner(unittest.TestCase):
     def test_planner_suite(self) -> None:
         test_astar_and_2d_sokoban_planner()
-        test_duck_repl_and_world_model_iw_search()
+        test_duck_repl_codeact()

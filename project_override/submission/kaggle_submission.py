@@ -248,7 +248,10 @@ def run_offline_evaluation(
                 if act_id == 0:
                     action_enum = GameAction.RESET
                 if act_id == 6:
-                    obs = env.step(action_enum, data=act_data)
+                    clean_data = dict(act_data) if act_data else {}
+                    cx = max(0, min(63, int(clean_data.get("x", 0))))
+                    cy = max(0, min(63, int(clean_data.get("y", 0))))
+                    obs = env.step(action_enum, data={"x": cx, "y": cy})
                 else:
                     obs = env.step(action_enum)
                 steps_taken += 1

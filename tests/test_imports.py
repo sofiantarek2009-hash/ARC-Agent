@@ -1,23 +1,27 @@
 import unittest
 from project_override.config import AgentConfig
-from project_override.execution.safe_executor import (
-    DPrimeComputeScheduler,
+from project_override.execution.avo_supervisor import (
+    AVOSupervisor,
+    KeyframeSearchTree,
     SafeGameExecutor,
-    TrajectorySupervisor,
 )
-from project_override.llm.local_runtime import LocalLLMRuntime, parse_llm_response
-from project_override.llm.repl import SandboxedREPL
+from project_override.llm.codeact_engine import SandboxedCodeActREPL, OfflineServerManager, parse_codeact_response
 from project_override.memory.action_ledger import ActionLedger, compute_arena_hash
-from project_override.memory.hypothesis_store import BayesianExplorationTracker, HypothesisStore
+from project_override.memory.hypothesis_store import HypothesisStore
 from project_override.orchestration.general_agent import GeneralAgent
-from project_override.perception.observation_processor import DynamicHUDMasker, ObservationProcessor
-from project_override.planning.explorer import SmartClickExplorer, bfs_frontier_explore
-from project_override.planning.planner import (
-    EmpiricalWorldModel,
-    MacroActionQueue,
-    astar_grid,
-    plan_sokoban_astar,
+from project_override.perception.observation_processor import ObservationProcessor, HUDSequenceExtractor
+from project_override.planning.general_explorer import MacroActionQueue, astar_grid
+from project_override.planning.domain_solvers import (
+    sokoban_solver,
+    solve_circuit_flow,
+    triangulate_beacon,
+    escort_joint_astar,
+    delayed_action_astar,
+    solve_gf2_toggle,
+    space_time_astar,
+    dreyfus_wagner_steiner_tree,
 )
+from project_override.core.goal_induction_engine import compute_topological_shannon_entropy
 from project_override.submission.kaggle_submission import (
     REQUIRED_PARQUET_COLUMNS,
     compute_game_rhae,

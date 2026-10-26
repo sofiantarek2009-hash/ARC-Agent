@@ -114,6 +114,13 @@ class GroundedVerifierGate:
     def reset_level(self) -> None:
         self.consecutive_violations = 0
 
+    def reset_game(self) -> None:
+        self.reset_level()
+        self.cegis.history.clear()
+        self.cegis.counterexamples.clear()
+        self.total_verified_actions = 0
+        self.total_rejected_actions = 0
+
     def verify(
         self,
         action_id: int,

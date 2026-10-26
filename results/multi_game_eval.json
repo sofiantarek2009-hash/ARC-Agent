@@ -1,0 +1,57 @@
+{
+  "games_attempted": 5,
+  "games_completed_without_crash": 5,
+  "mean_score": 0.71,
+  "levels_cleared": 1,
+  "total_runtime_s": 1293.918,
+  "mean_actions_per_game": 41.2,
+  "llm_loaded": true,
+  "llm_fallback_rate": 0.981,
+  "per_game": [
+    {
+      "game_id": "ls20",
+      "score": 3.57,
+      "levels_cleared": 1,
+      "actions": 50,
+      "runtime_s": 139.295,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "ft09",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 36,
+      "runtime_s": 288.528,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "cn04",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 40,
+      "runtime_s": 288.272,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "wa30",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 40,
+      "runtime_s": 288.396,
+      "crashed": false,
+      "failure_reason": ""
+    },
+    {
+      "game_id": "dc22",
+      "score": 0.0,
+      "levels_cleared": 0,
+      "actions": 40,
+      "runtime_s": 288.855,
+      "crashed": false,
+      "failure_reason": ""
+    }
+  ]
+}

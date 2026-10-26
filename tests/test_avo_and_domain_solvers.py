@@ -311,3 +311,55 @@ def test_hud_sequence_extractor():
     assert seq_info["active_color"] == 4
 
 
+def test_general_agent_autonomous_symbolic_dispatch():
+    """Verifies GeneralAgent autonomously dispatches escort, space-time, delay, and beacon solvers."""
+    from project_override.orchestration.general_agent import GeneralAgent
+    from project_override.config import AgentConfig
+    from project_override.core.goal_induction_engine import GoalGuidance, GoalCategory
+
+    agent = GeneralAgent(AgentConfig(enable_llm=False))
+    
+    # 1. Coordinate Clamping check
+    act, data = agent._format_action_payload(6, {"x": 100, "y": -5})
+    assert act == 6
+    assert data["x"] == 63
+    assert data["y"] == 0
+
+    # 2. Escort Joint Dispatch
+    grid = np.zeros((64, 64), dtype=int)
+    agent.avatar_pos = (10, 10)
+    agent.co_mover_pos = (20, 20)
+    agent.probed_directions = {1, 2, 3, 4}
+    guidance = GoalGuidance(
+        category=GoalCategory.EXIT_REACH,
+        primary_waypoints=[(10, 15), (20, 25)],
+        heuristic_distance=10.0,
+        recommended_solver="ASTAR_WAYPOINTS",
+        confidence=0.9,
+        description="Escort both avatars to goals",
+    )
+    agent.goal_inducer.get_goal_guidance = lambda *args, **kwargs: guidance
+
+    class MockObs:
+        def __init__(self, g):
+            self.frame = g
+            self.state = "PLAYING"
+            self.levels_completed = 0
+
+    # Should dispatch escort joint A*
+    act_id, act_payload = agent.act(MockObs(grid), available_actions=[1, 2, 3, 4])
+    assert act_id in (1, 2, 3, 4), "Should emit directional step from joint A*"
+    assert agent.macro_queue.active_subagent == "ESCORT_JOINT_ASTAR"
+
+    # 3. Beacon Deployment / Ghost Flagging Dispatch
+    agent.reset_game()
+    agent.probed_directions = {1, 2, 3, 4}
+    agent.step_in_level = 5
+    grid_beacon = np.zeros((64, 64), dtype=int)
+    grid_beacon[25, 30] = 7  # Revealed ghost pixel
+    act_id, act_payload = agent.act(MockObs(grid_beacon), available_actions=[1, 2, 3, 4, 5, 6])
+    assert act_id == 6, f"Should emit coordinate click on revealed ghost, got {act_id}"
+    assert act_payload == {"x": 30, "y": 25}
+
+
+

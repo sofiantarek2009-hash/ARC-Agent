@@ -276,6 +276,20 @@ class ObservationProcessor:
         int_dc = int(round(dc))
         stride = max(abs(int_dr), abs(int_dc))
 
+        co_movers = []
+        dynamic_hazards = []
+        for ope, oce, ovec in moving[1:]:
+            odr, odc = int(round(ovec[0])), int(round(ovec[1]))
+            if (odr == int_dr and odc == int_dc) or (abs(odr) == abs(int_dr) and abs(odc) == abs(int_dc)):
+                co_movers.append((int(round(oce.centroid[0])), int(round(oce.centroid[1]))))
+            else:
+                dynamic_hazards.append({
+                    "pos": (int(round(oce.centroid[0])), int(round(oce.centroid[1]))),
+                    "velocity": (odr, odc),
+                    "mass": oce.mass,
+                    "color": oce.color,
+                })
+
         return {
             "floor_color": floor_color if floor_color is not None else bg_color,
             "avatar_colors": {pe.color},
@@ -284,6 +298,8 @@ class ObservationProcessor:
             "stride": stride,
             "avatar_centroid": (round(ce.centroid[0], 1), round(ce.centroid[1], 1)),
             "half_w": max(1, (ce.bbox[2] - ce.bbox[0]) // 2),
+            "co_movers": co_movers,
+            "dynamic_hazards": dynamic_hazards,
         }
 
     def summarize_transition(

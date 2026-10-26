@@ -98,6 +98,20 @@ class GeneralAgent:
         self.hud_extractor = HUDSequenceExtractor()
         self.level_initial_grid: Optional[np.ndarray] = None
         self.inferred_goal_targets: List[Tuple[int, int]] = []
+        self.co_mover_pos: Optional[Tuple[int, int]] = None
+        self.dynamic_hazards: List[Dict[str, Any]] = []
+        self.deployed_beacons: Set[Tuple[int, int]] = set()
+        self.flagged_coords: Set[Tuple[int, int]] = set()
+        self.delay_pipeline_k: int = 0
+        self.action_history_queue: List[int] = []
+        self.beacon_observations: List[Tuple[int, int, int]] = []
+
+    def _format_action_payload(self, action_id: int, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+        clean = dict(payload) if payload else {}
+        if action_id == 6:
+            clean["x"] = max(0, min(63, int(clean.get("x", 0))))
+            clean["y"] = max(0, min(63, int(clean.get("y", 0))))
+        return action_id, clean
 
     def reset_game(self) -> None:
         self.current_level = 0
@@ -117,11 +131,18 @@ class GeneralAgent:
         self.solved_level_memory = SolvedLevelMemory()
         self.level_initial_grid = None
         self.inferred_goal_targets.clear()
+        self.co_mover_pos = None
+        self.dynamic_hazards.clear()
+        self.deployed_beacons.clear()
+        self.flagged_coords.clear()
+        self.delay_pipeline_k = 0
+        self.action_history_queue.clear()
+        self.beacon_observations.clear()
         self.ledger.reset_level(clear_deaths=True)
         self.lineage_dag = LineageDAG()
         self.compactor.reset_level()
         self.supervisor.reset_level()
-        self.verifier_gate.reset_level()
+        self.verifier_gate.reset_game()
         self.macro_queue.clear()
         self.explorer.reset_level()
         self.processor.hud_masker.reset_level()
@@ -156,6 +177,13 @@ class GeneralAgent:
         self.avatar_pos = None
         self.wall_cells.clear()
         self.level_initial_grid = None
+        self.co_mover_pos = None
+        self.dynamic_hazards.clear()
+        self.deployed_beacons.clear()
+        self.flagged_coords.clear()
+        self.delay_pipeline_k = 0
+        self.action_history_queue.clear()
+        self.beacon_observations.clear()
         self.ledger.reset_level(clear_deaths=False)
         self.macro_queue.clear()
         self.supervisor.reset_level()
@@ -248,6 +276,10 @@ class GeneralAgent:
                 cent = kin.get("avatar_centroid")
                 if cent:
                     self.avatar_pos = (int(round(cent[0])), int(round(cent[1])))
+                if kin.get("co_movers"):
+                    self.co_mover_pos = kin["co_movers"][0]
+                if kin.get("dynamic_hazards"):
+                    self.dynamic_hazards = kin["dynamic_hazards"]
                 vec = kin.get("vector")
                 if vec and vec != (0, 0):
                     dr, dc = vec
@@ -259,6 +291,21 @@ class GeneralAgent:
                             self.action_map[dir_key] = self.last_action_id
                             self.lineage_dag.persistent_notes["stride"] = stride
                             self.lineage_dag.persistent_notes["action_map"] = self.action_map
+
+            if self.last_action_id in (1, 2, 3, 4):
+                self.action_history_queue.append(self.last_action_id)
+                if len(self.action_history_queue) >= 3 and kin and kin.get("vector") != (0, 0):
+                    dr, dc = kin["vector"]
+                    stride = self.detected_stride or 1
+                    actual_dir = (dr // stride, dc // stride)
+                    last_act = self.action_history_queue[-1]
+                    if self.action_map.get(actual_dir) != last_act:
+                        for k in range(2, min(5, len(self.action_history_queue))):
+                            cand_act = self.action_history_queue[-k]
+                            if self.action_map.get(actual_dir) == cand_act:
+                                self.delay_pipeline_k = k - 1
+                                logger.info(f"[GeneralAgent] Detected Action-Delay Pipeline with K={self.delay_pipeline_k}")
+                                break
 
             # ---------------------------------------------------------
             # STAGE 3: Structured Transition Recording
@@ -384,7 +431,7 @@ class GeneralAgent:
                     self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
                     self.prev_grid = arr.copy()
                     self.prev_hash = curr_hash
-                    return first_act, first_data
+                    return self._format_action_payload(first_act, first_data)
 
         # ---------------------------------------------------------
         # STAGE 5.5: Level 1 Epistemic Cardinal Probe (Turns 1..4)
@@ -408,7 +455,7 @@ class GeneralAgent:
                     self.last_click_xy = (0, 0)
                     self.prev_grid = arr.copy()
                     self.prev_hash = curr_hash
-                    return probe_act, {}
+                    return self._format_action_payload(probe_act, {})
 
         # ---------------------------------------------------------
         # STAGE 6: Guarded Macro Queue Execution (Closed-Loop Sahu Rollback)
@@ -432,17 +479,17 @@ class GeneralAgent:
                 self.last_click_xy = (q_data.get("x", 0), q_data.get("y", 0))
                 self.prev_grid = arr.copy()
                 self.prev_hash = curr_hash
-                return q_act, q_data
+                return self._format_action_payload(q_act, q_data)
 
         # ---------------------------------------------------------
         # STAGE 6.5: Direct Symbolic Domain Solver Dispatch
         # ---------------------------------------------------------
-        if self.macro_queue.is_empty() and guidance is not None:
+        if self.macro_queue.is_empty():
             stride = self.detected_stride or self.processor.induce_stride(arr, canvas_bg, floor_color)
             av_cell = (self.avatar_pos[0] // stride, self.avatar_pos[1] // stride) if self.avatar_pos else None
 
             # 1. Sokoban push puzzle
-            if guidance.recommended_solver == "SOKOBAN_SOLVER" and av_cell and len(self.probed_directions) >= 2:
+            if guidance and guidance.recommended_solver == "SOKOBAN_SOLVER" and av_cell and len(self.probed_directions) >= 2:
                 bxs = guidance.metadata.get("boxes", [])
                 tgts = guidance.metadata.get("targets", [])
                 if bxs and tgts:
@@ -462,10 +509,108 @@ class GeneralAgent:
                         self.last_click_xy = (0, 0)
                         self.prev_grid = arr.copy()
                         self.prev_hash = curr_hash
-                        return first_act, {}
+                        return self._format_action_payload(first_act, {})
 
-            # 2. Consumption / Exit Reach pathfinding
-            elif guidance.category in (GoalCategory.CONSUMPTION, GoalCategory.EXIT_REACH) and av_cell and len(self.probed_directions) >= 2:
+            # 2. Escort / Co-Mover Joint Space Pathfinder
+            if self.co_mover_pos and av_cell and guidance and guidance.primary_waypoints and len(self.probed_directions) >= 2:
+                escort_cell = (self.co_mover_pos[0] // stride, self.co_mover_pos[1] // stride)
+                target_cell = (guidance.primary_waypoints[0][0] // stride, guidance.primary_waypoints[0][1] // stride)
+                escort_plan = escort_joint_astar(
+                    avatar_pos=av_cell,
+                    escort_pos=escort_cell,
+                    goal_pos=target_cell,
+                    walls=self.wall_cells,
+                    action_map=self.action_map,
+                )
+                if escort_plan:
+                    logger.info(f"[GeneralAgent] Escort Joint A* synthesized {len(escort_plan)} coupled actions.")
+                    first_act = escort_plan[0]
+                    if len(escort_plan) > 1:
+                        self.macro_queue.push_plan([(a, {}) for a in escort_plan[1:]], subagent_tag="ESCORT_JOINT_ASTAR")
+                    self.last_action_id = first_act
+                    self.last_click_xy = (0, 0)
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return self._format_action_payload(first_act, {})
+
+            # 3. Dynamic Hazard Avoidance via Space-Time A*
+            if len(self.dynamic_hazards) > 0 and av_cell and guidance and guidance.primary_waypoints and len(self.probed_directions) >= 2:
+                target_cell = (guidance.primary_waypoints[0][0] // stride, guidance.primary_waypoints[0][1] // stride)
+                hazard_plan = space_time_astar(
+                    grid=arr,
+                    start=av_cell,
+                    target=target_cell,
+                    dynamic_hazards=self.dynamic_hazards,
+                    walls=self.wall_cells,
+                    stride=stride,
+                    action_map=self.action_map,
+                )
+                if hazard_plan:
+                    logger.info(f"[GeneralAgent] Space-Time A* synthesized {len(hazard_plan)} hazard-dodging actions.")
+                    first_act = hazard_plan[0]
+                    if len(hazard_plan) > 1:
+                        self.macro_queue.push_plan([(a, {}) for a in hazard_plan[1:]], subagent_tag="SPACE_TIME_ASTAR")
+                    self.last_action_id = first_act
+                    self.last_click_xy = (0, 0)
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return self._format_action_payload(first_act, {})
+
+            # 4. Delayed Action Pipeline Search
+            if self.delay_pipeline_k >= 1 and av_cell and guidance and guidance.primary_waypoints and len(self.probed_directions) >= 2:
+                target_cell = (guidance.primary_waypoints[0][0] // stride, guidance.primary_waypoints[0][1] // stride)
+                delay_plan = delayed_action_astar(
+                    start_pos=av_cell,
+                    goal_pos=target_cell,
+                    walls=self.wall_cells,
+                    delay_k=self.delay_pipeline_k,
+                    action_map=self.action_map,
+                )
+                if delay_plan:
+                    logger.info(f"[GeneralAgent] Delayed Action A* synthesized {len(delay_plan)} actions for K={self.delay_pipeline_k}.")
+                    first_act = delay_plan[0]
+                    if len(delay_plan) > 1:
+                        self.macro_queue.push_plan([(a, {}) for a in delay_plan[1:]], subagent_tag="DELAYED_ACTION_ASTAR")
+                    self.last_action_id = first_act
+                    self.last_click_xy = (0, 0)
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return self._format_action_payload(first_act, {})
+
+            # 5. Hidden Beacon & Radar Triangulation (Actions 5 & 6)
+            if 5 in avail and 6 in avail and (not guidance or not guidance.primary_waypoints):
+                # Check for revealed entities (ghost pixels)
+                revealed = []
+                for r in range(4, 60):
+                    for c in range(4, 60):
+                        col = int(arr[r, c])
+                        if col != canvas_bg and col != floor_color and (r, c) not in self.flagged_coords:
+                            revealed.append((r, c))
+                if revealed:
+                    # Target revealed: click with Action 6!
+                    tr, tc = revealed[0]
+                    self.flagged_coords.add((tr, tc))
+                    logger.info(f"[GeneralAgent] Triangulated / Revealed beacon target flagged at ({tc}, {tr})")
+                    self.last_action_id = 6
+                    self.last_click_xy = (tc, tr)
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return self._format_action_payload(6, {"x": tc, "y": tr})
+                
+                # Check distance from deployed beacons
+                if self.avatar_pos:
+                    dist_to_beacons = [abs(self.avatar_pos[0] - br) + abs(self.avatar_pos[1] - bc) for br, bc in self.deployed_beacons]
+                    if not dist_to_beacons or min(dist_to_beacons) >= 6:
+                        self.deployed_beacons.add(self.avatar_pos)
+                        logger.info(f"[GeneralAgent] Deploying beacon via Action 5 at {self.avatar_pos}")
+                        self.last_action_id = 5
+                        self.last_click_xy = (0, 0)
+                        self.prev_grid = arr.copy()
+                        self.prev_hash = curr_hash
+                        return self._format_action_payload(5, {})
+
+            # 6. Consumption / Exit Reach pathfinding
+            if guidance and guidance.category in (GoalCategory.CONSUMPTION, GoalCategory.EXIT_REACH) and av_cell and len(self.probed_directions) >= 2:
                 scaled_wps = [(w[0] // stride, w[1] // stride) for w in guidance.primary_waypoints]
                 if scaled_wps:
                     env_ctx = {
@@ -492,9 +637,9 @@ class GeneralAgent:
                         self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
                         self.prev_grid = arr.copy()
                         self.prev_hash = curr_hash
-                        return first_act, first_data
+                        return self._format_action_payload(first_act, first_data)
 
-            # 3. HUD Sequence Token Steering
+            # 7. HUD Sequence Token Steering
             hud_seq = self.hud_extractor.extract_sequence(arr)
             if hud_seq and hud_seq.get("active_color") is not None and av_cell and len(self.probed_directions) >= 2:
                 act_col = hud_seq["active_color"]
@@ -525,7 +670,7 @@ class GeneralAgent:
                         self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
                         self.prev_grid = arr.copy()
                         self.prev_hash = curr_hash
-                        return first_act, first_data
+                        return self._format_action_payload(first_act, first_data)
 
         # ---------------------------------------------------------
         # STAGE 7: LLM CodeAct REPL Program Synthesis
@@ -602,7 +747,7 @@ class GeneralAgent:
                             self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
                             self.prev_grid = arr.copy()
                             self.prev_hash = curr_hash
-                            return first_act, first_data
+                            return self._format_action_payload(first_act, first_data)
 
         # ---------------------------------------------------------
         # STAGE 8: General Interaction Explorer
@@ -629,7 +774,7 @@ class GeneralAgent:
             self.last_click_xy = (exp_data.get("x", 0), exp_data.get("y", 0))
             self.prev_grid = arr.copy()
             self.prev_hash = curr_hash
-            return exp_act, exp_data
+            return self._format_action_payload(exp_act, exp_data)
 
         # ---------------------------------------------------------
         # STAGE 9: Novelty-Biased Discrete Fallback
@@ -650,4 +795,4 @@ class GeneralAgent:
         self.last_click_xy = (0, 0)
         self.prev_grid = arr.copy()
         self.prev_hash = curr_hash
-        return fallback_act, {}
+        return self._format_action_payload(fallback_act, {})
