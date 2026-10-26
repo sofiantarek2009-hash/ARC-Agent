@@ -99,7 +99,9 @@ class GeneralAgent:
         self.level_initial_grid: Optional[np.ndarray] = None
         self.inferred_goal_targets: List[Tuple[int, int]] = []
         self.co_mover_pos: Optional[Tuple[int, int]] = None
+        self.co_mover_streak: int = 0
         self.dynamic_hazards: List[Dict[str, Any]] = []
+        self.hazard_streak: int = 0
         self.deployed_beacons: Set[Tuple[int, int]] = set()
         self.flagged_coords: Set[Tuple[int, int]] = set()
         self.delay_pipeline_k: int = 0
@@ -132,7 +134,9 @@ class GeneralAgent:
         self.level_initial_grid = None
         self.inferred_goal_targets.clear()
         self.co_mover_pos = None
+        self.co_mover_streak = 0
         self.dynamic_hazards.clear()
+        self.hazard_streak = 0
         self.deployed_beacons.clear()
         self.flagged_coords.clear()
         self.delay_pipeline_k = 0
@@ -178,7 +182,9 @@ class GeneralAgent:
         self.wall_cells.clear()
         self.level_initial_grid = None
         self.co_mover_pos = None
+        self.co_mover_streak = 0
         self.dynamic_hazards.clear()
+        self.hazard_streak = 0
         self.deployed_beacons.clear()
         self.flagged_coords.clear()
         self.delay_pipeline_k = 0
@@ -277,9 +283,20 @@ class GeneralAgent:
                 if cent:
                     self.avatar_pos = (int(round(cent[0])), int(round(cent[1])))
                 if kin.get("co_movers"):
-                    self.co_mover_pos = kin["co_movers"][0]
+                    self.co_mover_streak += 1
+                    if self.co_mover_streak >= 2:
+                        self.co_mover_pos = kin["co_movers"][0]
+                else:
+                    self.co_mover_streak = 0
+                    self.co_mover_pos = None
+
                 if kin.get("dynamic_hazards"):
-                    self.dynamic_hazards = kin["dynamic_hazards"]
+                    self.hazard_streak += 1
+                    if self.hazard_streak >= 2:
+                        self.dynamic_hazards = kin["dynamic_hazards"]
+                else:
+                    self.hazard_streak = 0
+                    self.dynamic_hazards.clear()
                 vec = kin.get("vector")
                 if vec and vec != (0, 0):
                     dr, dc = vec

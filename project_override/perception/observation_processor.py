@@ -278,11 +278,19 @@ class ObservationProcessor:
 
         co_movers = []
         dynamic_hazards = []
+        pushed_boxes = []
         for ope, oce, ovec in moving[1:]:
             odr, odc = int(round(ovec[0])), int(round(ovec[1]))
-            if (odr == int_dr and odc == int_dc) or (abs(odr) == abs(int_dr) and abs(odc) == abs(int_dc)):
+            # Distance from avatar's landing position to this entity's prior position
+            dist_to_landing = abs((pe.centroid[0] + dr) - ope.centroid[0]) + abs((pe.centroid[1] + dc) - ope.centroid[1])
+            if dist_to_landing <= 1.2:
+                # The avatar stepped into this entity's prior tile, physically shoving it forward (Pushable box)
+                pushed_boxes.append((int(round(oce.centroid[0])), int(round(oce.centroid[1]))))
+            elif (odr == int_dr and odc == int_dc) or (abs(odr) == abs(int_dr) and abs(odc) == abs(int_dc)):
+                # Entity moved synchronously without the player stepping into it -> coupled escort NPC
                 co_movers.append((int(round(oce.centroid[0])), int(round(oce.centroid[1]))))
-            else:
+            elif max(abs(odr), abs(odc)) >= 1:
+                # Autonomous displacement without avatar contact -> dynamic hazard
                 dynamic_hazards.append({
                     "pos": (int(round(oce.centroid[0])), int(round(oce.centroid[1]))),
                     "velocity": (odr, odc),
@@ -300,6 +308,7 @@ class ObservationProcessor:
             "half_w": max(1, (ce.bbox[2] - ce.bbox[0]) // 2),
             "co_movers": co_movers,
             "dynamic_hazards": dynamic_hazards,
+            "pushed_boxes": pushed_boxes,
         }
 
     def summarize_transition(
