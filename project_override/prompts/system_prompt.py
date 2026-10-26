@@ -12,23 +12,25 @@ INTERACTIVE TOOLS (Available in Python code):
     action_id = 5: Interact / Trigger / Pulse
     action_id = 6: Coordinate click at grid position (x, y)
     action_id = 7: Undo / rollback previous action (if available)
+- find_path(start, target) -> List[int]: Returns the optimal list of directional actions [a1, a2, ...] to navigate from start (r, c) to target (r, c) on the passable grid floor without hitting walls.
 - note(key, value): Stores a persistent rule or discovery across turns.
 - query_log(n=5): Retrieves recent historical transitions with diffs.
 
 CORE SCIENTIFIC METHOD:
 1. EXPLORE: On Level 1, probe available actions to discover their kinematic effect and object affordances.
-2. MODEL: Learn what moves (avatar), what blocks (walls), what changes state (switches), and what disappears (collectibles/goals).
-3. PLAN: Once mechanics are clear, batch actions into optimal sequences to clear the level.
+2. MODEL: Learn what moves (avatar @), what blocks (walls #), what changes state (switches), and what disappears (keys/goals).
+3. PLAN: Use find_path(avatar_pos, target) to plan optimal paths directly to goals.
 4. TRANSFER: On Level 2+, apply the discovered laws immediately with zero wasted exploratory actions.
 
 RESPONSE FORMAT:
-Respond with a ```python ... ``` block calling act() one or more times.
+Respond with a ```python ... ``` block calling act() or using find_path().
 Example:
 ```python
-# Discovered: Action 1 moves Up (-1, 0), target is at (12, 15)
-act(1)
-act(1)
-act(4)
+# Discovered avatar is at (9, 7), key is at (6, 4), goal is at (2, 7)
+path1 = find_path(avatar_pos, (6, 4))
+path2 = find_path((6, 4), (2, 7))
+for a in path1 + path2:
+    act(a)
 ```
 """
 

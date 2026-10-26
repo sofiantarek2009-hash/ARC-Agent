@@ -48,6 +48,12 @@ class MacroActionQueue:
         self.queue: deque = deque()
         self.active_subagent: str = "DIRECT"
 
+    def is_empty(self) -> bool:
+        return len(self.queue) == 0
+
+    def __len__(self) -> int:
+        return len(self.queue)
+
     def clear(self) -> None:
         self.queue.clear()
         self.active_subagent = "DIRECT"
@@ -119,20 +125,30 @@ class GeneralInteractionExplorer:
             logger.info("[GeneralInteractionExplorer] Probing ACTION5 (Interact/Pulse).")
             return 5, {}
 
-        # Priority 2: Coordinate Clicks (ACTION6) - explore salient entity centroids
+        directional = [a for a in available_actions if a in (1, 2, 3, 4)]
+
+        # Priority 2: If controllable avatar is present, explore via directional movement
+        if avatar_pos is not None and directional:
+            untried = ledger.get_untried_discrete_actions(state_hash, directional, level_idx)
+            if untried:
+                return untried[0], {}
+            ranked = sorted(
+                directional,
+                key=lambda a: ledger.compute_action_penalty(state_hash, a, None, 0, 0, level_idx),
+            )
+            return ranked[0], {}
+
+        # Priority 3: Coordinate Clicks (ACTION6) - explore salient entity centroids
         if 6 in available_actions:
             click_choice = self._select_smart_click(grid, entities, state_hash, ledger, level_idx)
             if click_choice is not None:
                 return 6, click_choice
 
-        # Priority 3: Directional actions (1-4) - try untried actions from this state
-        directional = [a for a in available_actions if a in (1, 2, 3, 4)]
+        # Priority 4: Fallback directional actions
         if directional:
             untried = ledger.get_untried_discrete_actions(state_hash, directional, level_idx)
             if untried:
                 return untried[0], {}
-
-            # Priority 4: Novelty-biased least-taken directional action
             ranked = sorted(
                 directional,
                 key=lambda a: ledger.compute_action_penalty(state_hash, a, None, 0, 0, level_idx),

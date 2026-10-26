@@ -286,6 +286,125 @@ class SandboxedCodeActREPL:
 
         query_fn = environment_context.get("query_log_fn", lambda n=5: [])
 
+        def bfs_single(start: Tuple[int, int], target: Tuple[int, int]) -> List[int]:
+            from collections import deque
+            import numpy as np
+            grid = environment_context.get("grid")
+            if grid is None:
+                return []
+            stride = environment_context.get("stride", 5)
+            bg = environment_context.get("bg_color", 4)
+            action_map = environment_context.get(
+                "action_map", {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
+            )
+            sub_h, sub_w = grid.shape[0] // stride, grid.shape[1] // stride
+
+            # Auto-scale world pixel coordinates to stride space if needed
+            s_r, s_c = start[0], start[1]
+            if s_r >= sub_h or s_c >= sub_w:
+                s_r, s_c = s_r // stride, s_c // stride
+            t_r, t_c = target[0], target[1]
+            if t_r >= sub_h or t_c >= sub_w:
+                t_r, t_c = t_r // stride, t_c // stride
+            start = (s_r, s_c)
+            target = (t_r, t_c)
+
+            grid_stride = np.zeros((sub_h, sub_w), dtype=int)
+            for r in range(sub_h):
+                for c in range(sub_w):
+                    grid_stride[r, c] = grid[r * stride + stride // 2, c * stride + stride // 2]
+
+            q = deque([(start, [])])
+            visited = {start}
+            while q:
+                (r, c), path = q.popleft()
+                if (r, c) == target:
+                    return path
+                for (dr, dc), aid in action_map.items():
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < sub_h and 0 <= nc < sub_w and (nr, nc) not in visited:
+                        val = grid_stride[nr, nc]
+                        if (nr, nc) == target or val != bg:
+                            visited.add((nr, nc))
+                            q.append(((nr, nc), path + [aid]))
+            return []
+
+        def find_path(start: Tuple[int, int], target: Any) -> List[int]:
+            """General 2D pathfinder. Accepts single (r, c) target or list of [(r, c), ...] targets.
+            When multiple targets are given, computes the exact minimal tour via Held-Karp Metric TSP.
+            """
+            if not target:
+                return []
+            if isinstance(target, list) and target and isinstance(target[0], (tuple, list)):
+                targets = [tuple(t[:2]) for t in target]
+                if len(targets) == 1:
+                    return bfs_single(start, targets[0])
+                if len(targets) > 8:
+                    targets = targets[:8]
+                nodes = [start] + targets
+                k = len(nodes)
+                pair_paths = {}
+                dist_matrix = [[float('inf')] * k for _ in range(k)]
+                for i in range(k):
+                    dist_matrix[i][i] = 0
+                    for j in range(k):
+                        if i == j:
+                            continue
+                        p = bfs_single(nodes[i], nodes[j])
+                        if p or nodes[i] == nodes[j]:
+                            dist_matrix[i][j] = len(p)
+                            pair_paths[(i, j)] = p
+
+                reachable = [i for i in range(1, k) if dist_matrix[0][i] < float('inf')]
+                if not reachable:
+                    return []
+                if len(reachable) == 1:
+                    return pair_paths.get((0, reachable[0]), [])
+
+                sub_nodes = [0] + reachable
+                sub_k = len(sub_nodes)
+                sub_dist = [[dist_matrix[sub_nodes[i]][sub_nodes[j]] for j in range(sub_k)] for i in range(sub_k)]
+
+                memo = {}
+                import itertools
+                for i in range(1, sub_k):
+                    memo[(1 << i, i)] = (sub_dist[0][i], [i])
+                for sz in range(2, sub_k):
+                    for subset in itertools.combinations(range(1, sub_k), sz):
+                        mask = sum(1 << i for i in subset)
+                        for last in subset:
+                            prev_mask = mask ^ (1 << last)
+                            best_cost = float('inf')
+                            best_p = []
+                            for prev in subset:
+                                if prev != last and (prev_mask, prev) in memo:
+                                    cost = memo[(prev_mask, prev)][0] + sub_dist[prev][last]
+                                    if cost < best_cost:
+                                        best_cost = cost
+                                        best_p = memo[(prev_mask, prev)][1] + [last]
+                            if best_cost < float('inf'):
+                                memo[(mask, last)] = (best_cost, best_p)
+
+                full_mask = sum(1 << i for i in range(1, sub_k))
+                best_total = float('inf')
+                best_tour = []
+                for last in range(1, sub_k):
+                    if (full_mask, last) in memo:
+                        cost, p = memo[(full_mask, last)]
+                        if cost < best_total:
+                            best_total = cost
+                            best_tour = p
+
+                full_actions = []
+                curr_node = 0
+                for step_idx in best_tour:
+                    orig_target_node = sub_nodes[step_idx]
+                    full_actions.extend(pair_paths.get((curr_node, orig_target_node), []))
+                    curr_node = orig_target_node
+                return full_actions
+            else:
+                return bfs_single(start, tuple(target[:2]))
+
         sandbox_globals = {
             "__builtins__": {
                 "range": range, "len": len, "enumerate": enumerate, "zip": zip,
@@ -295,12 +414,14 @@ class SandboxedCodeActREPL:
             },
             "act": act,
             "note": note,
+            "find_path": find_path,
             "query_log": query_fn,
             "np": __import__("numpy"),
             "math": __import__("math"),
             "grid": environment_context.get("grid"),
             "prev_grid": environment_context.get("prev_grid"),
             "avatar_pos": environment_context.get("avatar_pos"),
+            "targets": environment_context.get("targets", []),
             "available_actions": environment_context.get("available_actions", [1, 2, 3, 4, 5, 6]),
             "entities": environment_context.get("entities", []),
         }

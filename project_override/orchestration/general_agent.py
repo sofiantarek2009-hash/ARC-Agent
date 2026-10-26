@@ -73,6 +73,9 @@ class GeneralAgent:
         self.last_delta_omega: Optional[int] = None
         self.avatar_pos: Optional[Tuple[int, int]] = None
         self.wall_cells: Set[Tuple[int, int]] = set()
+        self.detected_stride: Optional[int] = None
+        self.action_map: Dict[Tuple[int, int], int] = {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
+        self.probed_directions: Set[int] = set()
 
     def reset_game(self) -> None:
         self.current_level = 0
@@ -85,6 +88,9 @@ class GeneralAgent:
         self.last_delta_omega = None
         self.avatar_pos = None
         self.wall_cells.clear()
+        self.detected_stride = None
+        self.action_map = {(-1, 0): 1, (1, 0): 2, (0, -1): 3, (0, 1): 4}
+        self.probed_directions.clear()
         self.ledger.reset_level(clear_deaths=True)
         self.lineage_dag = LineageDAG()
         self.compactor.reset_level()
@@ -185,6 +191,17 @@ class GeneralAgent:
                 cent = kin.get("avatar_centroid")
                 if cent:
                     self.avatar_pos = (int(round(cent[0])), int(round(cent[1])))
+                vec = kin.get("vector")
+                if vec and vec != (0, 0):
+                    dr, dc = vec
+                    stride = kin.get("stride", max(abs(dr), abs(dc)))
+                    if stride >= 2:
+                        self.detected_stride = stride
+                        dir_key = (dr // stride, dc // stride)
+                        if self.last_action_id in (1, 2, 3, 4):
+                            self.action_map[dir_key] = self.last_action_id
+                            self.lineage_dag.persistent_notes["stride"] = stride
+                            self.lineage_dag.persistent_notes["action_map"] = self.action_map
 
             # ---------------------------------------------------------
             # STAGE 3: Structured Transition Recording
@@ -249,6 +266,30 @@ class GeneralAgent:
             self.macro_queue.clear()
 
         # ---------------------------------------------------------
+        # STAGE 5.5: Level 1 Epistemic Cardinal Probe (Turns 1..4)
+        # ---------------------------------------------------------
+        if self.current_level <= 1 and self.step_in_level <= 4 and self.macro_queue.is_empty():
+            dir_avail = [a for a in avail if a in (1, 2, 3, 4)]
+            untried = [a for a in dir_avail if a not in self.probed_directions]
+            if untried:
+                probe_act = untried[0]
+                self.probed_directions.add(probe_act)
+                if self.verifier_gate.verify(
+                    action_id=probe_act,
+                    payload={},
+                    available_actions=avail,
+                    state_hash=curr_hash,
+                    ledger=self.ledger,
+                    level_idx=self.current_level,
+                ):
+                    logger.info(f"[GeneralAgent] Epistemic Cardinal Probe step {self.step_in_level}: action {probe_act}")
+                    self.last_action_id = probe_act
+                    self.last_click_xy = (0, 0)
+                    self.prev_grid = arr.copy()
+                    self.prev_hash = curr_hash
+                    return probe_act, {}
+
+        # ---------------------------------------------------------
         # STAGE 6: Guarded Macro Queue Execution
         # ---------------------------------------------------------
         queued = self.macro_queue.pop_next(
@@ -277,7 +318,14 @@ class GeneralAgent:
         if self.config.enable_llm and (self.step_in_level % self.config.llm_call_interval == 0):
             server_mgr = OfflineServerManager.get_instance(self.config)
             if server_mgr.ensure_server_running():
-                obs_summary = self.processor.encode_compact_observation(arr)
+                stride = self.detected_stride or self.processor.induce_stride(arr, canvas_bg, floor_color)
+                av_cell = (self.avatar_pos[0] // stride, self.avatar_pos[1] // stride) if self.avatar_pos else None
+                _, _, detected_items = self.processor.render_ascii_stride_grid(
+                    arr, canvas_bg, floor_color, avatar_pos=self.avatar_pos, stride=stride
+                )
+                targets = [(r, c) for r, c, tag in detected_items]
+
+                obs_summary = self.processor.encode_compact_observation(arr, avatar_pos=self.avatar_pos, stride=stride)
                 mem_context = self.compactor.render_context(self.lineage_dag)
                 prompt = build_agent_prompt(
                     level_idx=self.current_level,
@@ -299,7 +347,12 @@ class GeneralAgent:
                         env_ctx = {
                             "grid": arr,
                             "prev_grid": self.prev_grid,
-                            "avatar_pos": self.avatar_pos,
+                            "avatar_pos": av_cell or self.avatar_pos,
+                            "targets": targets,
+                            "stride": stride,
+                            "bg_color": canvas_bg,
+                            "floor_color": floor_color,
+                            "action_map": self.action_map,
                             "available_actions": avail,
                             "entities": curr_entities,
                             "notes": self.lineage_dag.persistent_notes,

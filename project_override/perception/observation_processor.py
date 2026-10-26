@@ -270,22 +270,113 @@ class ObservationProcessor:
             return f"MOVED({dr:+d},{dc:+d})_px{delta}"
         return f"DIFF_px{delta}"
 
-    def encode_compact_observation(self, grid: np.ndarray) -> str:
-        """Encodes grid into compact symbolic summary for LLM prompt context."""
+    def induce_stride(self, grid: np.ndarray, bg_color: int, floor_color: Optional[int]) -> int:
+        """Estimates discrete kinematic cell stride from entity dimensions or common divisors."""
+        ents = self.extract_entities(grid, bg_color, floor_color)
+        if not ents:
+            return 5
+        from collections import Counter
+        dims = []
+        for e in ents:
+            h = e.bbox[2] - e.bbox[0]
+            w = e.bbox[3] - e.bbox[1]
+            if 2 <= h <= 16:
+                dims.append(h)
+            if 2 <= w <= 16:
+                dims.append(w)
+        if dims:
+            counts = Counter(dims)
+            mode_dim = counts.most_common(1)[0][0]
+            if 3 <= mode_dim <= 16:
+                return mode_dim
+        return 5
+
+    def render_ascii_stride_grid(
+        self,
+        grid: np.ndarray,
+        bg_col: int,
+        floor_col: Optional[int],
+        avatar_pos: Optional[Tuple[int, int]] = None,
+        stride: int = 5,
+    ) -> Tuple[str, Optional[Tuple[int, int]], List[Tuple[int, int, str]]]:
+        """Renders compact downsampled 2D ASCII grid with coordinate headers."""
+        stride = max(1, min(stride, 16))
+        sub_h, sub_w = grid.shape[0] // stride, grid.shape[1] // stride
+        if sub_h == 0 or sub_w == 0:
+            return "", None, []
+
+        grid_stride = np.zeros((sub_h, sub_w), dtype=int)
+        for r in range(sub_h):
+            for c in range(sub_w):
+                grid_stride[r, c] = grid[r * stride + stride // 2, c * stride + stride // 2]
+
+        av_cell: Optional[Tuple[int, int]] = None
+        if avatar_pos is not None:
+            av_cell = (avatar_pos[0] // stride, avatar_pos[1] // stride)
+
+        interactive_items: List[Tuple[int, int, str]] = []
+
+        header = "    " + " ".join(f"{c:2d}" for c in range(sub_w))
+        lines = [header]
+
+        # Identify perimeter border columns/rows to avoid listing frame borders as targets
+        border_r = set()
+        border_c = set()
+        if sub_h > 2:
+            if np.count_nonzero(grid_stride[0, :] == grid_stride[0, 0]) >= sub_w * 0.7:
+                border_r.add(0)
+            if np.count_nonzero(grid_stride[sub_h - 1, :] == grid_stride[sub_h - 1, 0]) >= sub_w * 0.7:
+                border_r.add(sub_h - 1)
+        if sub_w > 2:
+            if np.count_nonzero(grid_stride[:, 0] == grid_stride[0, 0]) >= sub_h * 0.7:
+                border_c.add(0)
+            if np.count_nonzero(grid_stride[:, sub_w - 1] == grid_stride[0, sub_w - 1]) >= sub_h * 0.7:
+                border_c.add(sub_w - 1)
+
+        for r in range(sub_h):
+            row_chars = []
+            for c in range(sub_w):
+                val = grid_stride[r, c]
+                if (r, c) == av_cell:
+                    ch = " @"
+                elif val == bg_col:
+                    ch = " #"
+                elif floor_col is not None and val == floor_col:
+                    ch = " ."
+                else:
+                    ch = f" {val}"
+                    if r not in border_r and c not in border_c:
+                        interactive_items.append((r, c, f"Color_{val}"))
+                row_chars.append(ch)
+            lines.append(f"{r:2d} |" + "".join(row_chars))
+
+        return "\n".join(lines), av_cell, interactive_items
+
+    def encode_compact_observation(
+        self,
+        grid: np.ndarray,
+        avatar_pos: Optional[Tuple[int, int]] = None,
+        stride: int = 5,
+    ) -> str:
+        """Encodes grid into 2D spatial ASCII map and semantic object list for LLM context."""
         h, w = grid.shape
         bg_col, floor_col = self.induce_canvas_and_floor(grid)
         ents = self.extract_entities(grid, bg_col, floor_col)
-        
-        lines = [f"GRID_SHAPE: {h}x{w} | BG_COLOR: {bg_col} | FLOOR_COLOR: {floor_col}"]
-        lines.append(f"TOTAL_ENTITIES: {len(ents)}")
-        # Group entities by color
-        by_col: Dict[int, List[Entity]] = {}
-        for e in ents:
-            by_col.setdefault(e.color, []).append(e)
-            
-        for col, col_ents in sorted(by_col.items()):
-            centroids = [f"({e.centroid[0]:.1f},{e.centroid[1]:.1f})" for e in col_ents[:6]]
-            extra = f"...+{len(col_ents)-6}" if len(col_ents) > 6 else ""
-            lines.append(f"  Color {col} (cnt={len(col_ents)}, mass={col_ents[0].mass}): {', '.join(centroids)}{extra}")
-            
+
+        ascii_map, av_cell, items = self.render_ascii_stride_grid(
+            grid, bg_col, floor_col, avatar_pos=avatar_pos, stride=stride
+        )
+
+        lines = [f"GRID_SHAPE: {h}x{w} (cell stride = {stride}) | BG_COLOR: {bg_col} (#) | FLOOR_COLOR: {floor_col} (.)"]
+        if av_cell is not None:
+            lines.append(f"PLAYER_AVATAR: @ at grid coordinate {av_cell} (world pixel: {avatar_pos})")
+        else:
+            lines.append("PLAYER_AVATAR: @ (probing initial motion to locate)")
+
+        if items:
+            items_str = ", ".join(f"{tag} at ({r},{c})" for r, c, tag in items[:8])
+            lines.append(f"INTERACTIVE_OBJECTS / TARGETS: {items_str}")
+
+        lines.append(f"\n2D SPATIAL MAP (Legends: @=Avatar, .=Passable Floor, #=Wall/Void, Letters=Items/Goals):\n{ascii_map}")
+
         return "\n".join(lines)
