@@ -8,6 +8,7 @@ from project_override.core.goal_induction_engine import (
     DeltaGoalInductionEngine as DeltaGoalInducer,
     GoalCategory,
     SolvedLevelMemory,
+    compute_topological_shannon_entropy,
 )
 from project_override.execution.avo_supervisor import (
     AVOSupervisor,
@@ -23,13 +24,17 @@ from project_override.memory.lineage_dag import LineageDAG
 from project_override.memory.semantic_compactor import SemanticMemoryCompactor
 from project_override.perception.observation_processor import (
     Entity,
+    HUDSequenceExtractor,
     ObservationProcessor,
 )
 from project_override.planning.domain_solvers import (
     delayed_action_astar,
+    dreyfus_wagner_steiner_tree,
     escort_joint_astar,
     sokoban_solver,
     solve_circuit_flow,
+    solve_gf2_toggle,
+    space_time_astar,
     triangulate_beacon,
 )
 from project_override.planning.general_explorer import (
@@ -90,6 +95,7 @@ class GeneralAgent:
         self.probed_directions: Set[int] = set()
         self.goal_inducer = DeltaGoalInducer()
         self.solved_level_memory = SolvedLevelMemory()
+        self.hud_extractor = HUDSequenceExtractor()
         self.level_initial_grid: Optional[np.ndarray] = None
         self.inferred_goal_targets: List[Tuple[int, int]] = []
 
@@ -311,6 +317,8 @@ class GeneralAgent:
         guidance = self.goal_inducer.get_goal_guidance(arr, mover_pos=self.avatar_pos)
         if guidance and guidance.heuristic_distance is not None:
             prog_val = -guidance.heuristic_distance
+        else:
+            prog_val = -compute_topological_shannon_entropy(arr, canvas_bg)
 
         self.supervisor.observe_state(curr_hash, self.last_action_id, self.step_in_level, progress_val=prog_val)
         if self.supervisor.should_force_undo(avail):
@@ -480,6 +488,39 @@ class GeneralAgent:
                         if len(path_plan) > 1:
                             self.macro_queue.push_plan(path_plan[1:], subagent_tag="INVARIANT_GOAL_ASTAR")
                         logger.info(f"[GeneralAgent] Invariant Goal A* dispatched {len(path_plan)} actions.")
+                        self.last_action_id = first_act
+                        self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
+                        self.prev_grid = arr.copy()
+                        self.prev_hash = curr_hash
+                        return first_act, first_data
+
+            # 3. HUD Sequence Token Steering
+            hud_seq = self.hud_extractor.extract_sequence(arr)
+            if hud_seq and hud_seq.get("active_color") is not None and av_cell and len(self.probed_directions) >= 2:
+                act_col = hud_seq["active_color"]
+                hud_pts = np.argwhere(arr == act_col)
+                pf_pts = [(int(r) // stride, int(c) // stride) for r, c in hud_pts if r >= 6]
+                if pf_pts:
+                    env_ctx = {
+                        "grid": arr,
+                        "prev_grid": self.prev_grid,
+                        "avatar_pos": av_cell,
+                        "targets": pf_pts[:4],
+                        "stride": stride,
+                        "bg_color": canvas_bg,
+                        "floor_color": floor_color,
+                        "action_map": self.action_map,
+                        "available_actions": avail,
+                    }
+                    seq_plan = self.repl.execute_codeact(
+                        "plan = find_path(avatar_pos, targets)\nfor a in plan:\n    act(a)",
+                        env_ctx,
+                    )
+                    if seq_plan:
+                        first_act, first_data = seq_plan[0]
+                        if len(seq_plan) > 1:
+                            self.macro_queue.push_plan(seq_plan[1:], subagent_tag="HUD_SEQUENCE_ASTAR")
+                        logger.info(f"[GeneralAgent] HUD Sequence A* dispatched {len(seq_plan)} actions for color {act_col}.")
                         self.last_action_id = first_act
                         self.last_click_xy = (first_data.get("x", 0), first_data.get("y", 0))
                         self.prev_grid = arr.copy()

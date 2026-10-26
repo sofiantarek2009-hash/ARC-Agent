@@ -261,6 +261,48 @@ def _read_perimeter_hud_metric(grid: np.ndarray, hud_location: str = "TOP") -> i
     return int(np.sum(strip != bg))
 
 
+def compute_topological_shannon_entropy(grid: np.ndarray, bg_color: int = 0) -> float:
+    """Computes composite structural Shannon entropy H(G) = H_color + 0.5 * H_spatial + 0.5 * H_boundary.
+    
+    A negative change delta_H = H(post) - H(pre) <= -epsilon indicates constructive,
+    order-increasing progress (clearing clutter, grouping objects, cavity closure).
+    """
+    H, W = grid.shape
+    total_cells = H * W
+
+    # 1. Color distribution entropy (excluding background)
+    non_bg_mask = (grid != bg_color)
+    total_fg = int(np.sum(non_bg_mask))
+    if total_fg == 0:
+        h_color = 0.0
+    else:
+        unique, counts = np.unique(grid[non_bg_mask], return_counts=True)
+        probs = counts / float(total_fg)
+        h_color = float(-np.sum(probs * np.log2(probs + 1e-12)))
+
+    # 2. Spatial dispersion entropy
+    pts = np.argwhere(non_bg_mask)
+    if len(pts) <= 1:
+        h_spatial = 0.0
+    else:
+        centroid = np.mean(pts, axis=0)
+        dists = np.linalg.norm(pts - centroid, axis=1)
+        sum_dists = np.sum(dists)
+        if sum_dists == 0:
+            h_spatial = 0.0
+        else:
+            p_dist = dists / sum_dists
+            p_dist = p_dist[p_dist > 0]
+            h_spatial = float(-np.sum(p_dist * np.log2(p_dist + 1e-12))) / max(1.0, float(np.log2(len(pts))))
+
+    # 3. Boundary roughness entropy
+    diff_h = np.count_nonzero(grid[:-1, :] != grid[1:, :])
+    diff_w = np.count_nonzero(grid[:, :-1] != grid[:, 1:])
+    h_boundary = float(diff_h + diff_w) / float(2 * total_cells)
+
+    return float(h_color + 0.5 * h_spatial + 0.5 * h_boundary)
+
+
 # =====================================================================
 # 3. Solved-Level Memory: Zero-Waste Cross-Level Transfer (115% RHAE)
 # =====================================================================

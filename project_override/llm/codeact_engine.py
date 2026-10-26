@@ -13,6 +13,7 @@ import urllib.request
 from project_override.config import AgentConfig
 from project_override.planning.domain_solvers import (
     delayed_action_astar,
+    dreyfus_wagner_steiner_tree,
     escort_joint_astar,
     sokoban_solver,
     solve_circuit_flow,
@@ -566,6 +567,7 @@ class SandboxedCodeActREPL:
             "triangulate_beacon": triangulate_beacon,
             "escort_joint_astar": escort_joint_astar,
             "delayed_action_astar": delayed_action_astar,
+            "dreyfus_wagner_steiner_tree": dreyfus_wagner_steiner_tree,
             "query_log": query_fn,
             "np": __import__("numpy"),
             "math": __import__("math"),

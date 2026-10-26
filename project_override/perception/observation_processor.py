@@ -75,6 +75,34 @@ class DynamicHUDMasker:
         return arr
 
 
+class HUDSequenceExtractor:
+    """Extracts 1D card sequence strips and active highlighted target tokens from perimeter HUDs."""
+    def __init__(self, bg_color: int = 0):
+        self.bg_color = bg_color
+
+    def extract_sequence(self, grid: np.ndarray) -> Optional[Dict[str, Any]]:
+        h, w = grid.shape
+        top_strip = grid[:6, 4:w-4]
+        if np.any(top_strip != self.bg_color):
+            labeled, num = scipy_label(top_strip != self.bg_color)
+            if 2 <= num <= 12:
+                tokens = []
+                for i in range(1, num + 1):
+                    pts = np.argwhere(labeled == i)
+                    colors = [top_strip[r, c] for r, c in pts]
+                    c_mode = max(set(colors), key=colors.count)
+                    centroid_c = int(np.mean(pts[:, 1])) + 4
+                    tokens.append((centroid_c, c_mode))
+                tokens.sort(key=lambda t: t[0])
+                token_colors = [t[1] for t in tokens]
+                return {
+                    "location": "TOP",
+                    "tokens": token_colors,
+                    "active_color": token_colors[0] if token_colors else None,
+                }
+        return None
+
+
 class ObservationProcessor:
     """Normalizes grids, segments connected objects via scipy CCL, tracks entities via Hungarian
     matching, and extracts accurate transition kinematics without fixed coordinate assumptions.

@@ -260,3 +260,54 @@ def test_cegis_retrodiction_verifier():
     assert cx_f is not None
     assert cx_f["coord"] == (2, 2)
 
+
+def test_dreyfus_wagner_steiner_tree_multi_terminal():
+    """Tests dreyfus_wagner_steiner_tree connects 3 terminals with minimal Steiner tree."""
+    from project_override.planning.domain_solvers import dreyfus_wagner_steiner_tree
+
+    H, W = 10, 10
+    passable = np.ones((H, W), dtype=bool)
+    # Terminals at 3 corners: (2, 2), (2, 8), (8, 5)
+    terminals = [(2, 2), (2, 8), (8, 5)]
+
+    cost, tree_cells = dreyfus_wagner_steiner_tree((H, W), passable, terminals)
+    assert cost < np.inf, "Steiner tree should find a valid interconnect"
+    for t in terminals:
+        assert t in tree_cells, f"Terminal {t} must be in Steiner tree"
+    # The Steiner root is around (2, 5), giving cost 3 + 3 + 6 = 12
+    assert cost <= 12.0, f"Expected cost <= 12, got {cost}"
+
+
+def test_topological_shannon_entropy_minimization():
+    """Tests compute_topological_shannon_entropy decreases as chaotic grid unifies."""
+    from project_override.core.goal_induction_engine import compute_topological_shannon_entropy
+
+    # Chaotic high-entropy grid with many scattered colors
+    chaotic = np.random.randint(0, 8, size=(16, 16))
+    h_chaotic = compute_topological_shannon_entropy(chaotic, bg_color=0)
+
+    # Clean low-entropy grid with single grouped object
+    clean = np.zeros((16, 16), dtype=int)
+    clean[4:8, 4:8] = 3
+    h_clean = compute_topological_shannon_entropy(clean, bg_color=0)
+
+    assert h_clean < h_chaotic, f"Clean grid entropy ({h_clean:.3f}) should be lower than chaotic ({h_chaotic:.3f})"
+
+
+def test_hud_sequence_extractor():
+    """Tests HUDSequenceExtractor detects 1D card sequence tokens from top strip."""
+    from project_override.perception.observation_processor import HUDSequenceExtractor
+
+    grid = np.zeros((64, 64), dtype=int)
+    # Create top HUD tokens: token 1 (color 4), token 2 (color 7), token 3 (color 11)
+    grid[1:3, 10:13] = 4
+    grid[1:3, 20:23] = 7
+    grid[1:3, 30:33] = 11
+
+    extractor = HUDSequenceExtractor(bg_color=0)
+    seq_info = extractor.extract_sequence(grid)
+    assert seq_info is not None, "Should detect HUD sequence"
+    assert seq_info["tokens"] == [4, 7, 11], f"Expected [4, 7, 11], got {seq_info['tokens']}"
+    assert seq_info["active_color"] == 4
+
+
