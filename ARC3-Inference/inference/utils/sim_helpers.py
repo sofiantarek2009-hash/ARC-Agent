@@ -363,13 +363,51 @@ class System1ReflexiveRouter:
         passable = all_cells - obstacle_cells | goals
         path = find_shortest_path(start, goals, passable, grid_shape=(H, W))
         if path:
-            # Look-Ahead Simulation Gate:
-            # Never execute blindly. Verify the first action step in simulation.
-            # If path is longer than 1 step, return only a safe probe prefix (e.g. 1-2 actions)
-            # or yield to LLM if the grid is under dynamic transition.
             self.bypassed_turns += 1
-            # Return safe probe prefix (max 3 actions) so adversarial mechanics / traps
-            # are caught early rather than committing a 30-step blind death run.
+            # Full 100% Look-Ahead Simulation Gate:
+            # Check grid cells along the path for interactive surface modifiers
+            # (e.g. pressure plates, colored floor tiles, triggers).
+            # If all probe cells match uniform background/floor, commit safe 3-step sprint.
+            # If any step encounters an unknown non-floor tile, clamp to 1 step to yield
+            # control to System 2 immediately after the intervention.
+            grid = getattr(current_frame, "grid", None)
+            if grid is not None and hasattr(grid, "__getitem__"):
+                # Determine floor / background color from start surrounding or mode
+                floor_color = None
+                sr, sc = start
+                surround = [(sr-1, sc), (sr+1, sc), (sr, sc-1), (sr, sc+1)]
+                for r, c in surround:
+                    if (r, c) in passable and (r, c) not in goals:
+                        try:
+                            floor_color = grid[r][c]
+                            break
+                        except Exception:
+                            pass
+                
+                # Trace candidate steps
+                cur_r, cur_c = start
+                delta_map = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+                safe_steps = 0
+                for act in path[:3]:
+                    dr, dc = delta_map.get(act, (0, 0))
+                    cur_r += dr
+                    cur_c += dc
+                    if (cur_r, cur_c) in goals:
+                        safe_steps += 1
+                        break
+                    if floor_color is not None:
+                        try:
+                            cell_col = grid[cur_r][cur_c]
+                            if cell_col != floor_color:
+                                # Non-floor surface modifier detected! Clamp to single step
+                                safe_steps = max(1, safe_steps)
+                                break
+                        except Exception:
+                            pass
+                    safe_steps += 1
+                return path[:max(1, safe_steps)]
+                
+            # Default safe probe prefix (max 3 actions)
             return path[:3]
             
         return None
