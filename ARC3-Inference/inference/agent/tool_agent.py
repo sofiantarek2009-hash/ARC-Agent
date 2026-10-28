@@ -250,7 +250,7 @@ def _get_env_float(name: str, default: float) -> float:
 
 
 _LOCAL_ANALYZER_MAX_OUTPUT = _get_env_int("LOCAL_ANALYZER_MAX_OUTPUT", 0)
-_LOCAL_ANALYZER_CONTEXT_WINDOW = _get_env_int("LOCAL_ANALYZER_CONTEXT_WINDOW", 12288)
+_LOCAL_ANALYZER_CONTEXT_WINDOW = _get_env_int("LOCAL_ANALYZER_CONTEXT_WINDOW", 32768)
 _LOCAL_ANALYZER_TIMEOUT = _get_env_float("LOCAL_ANALYZER_TIMEOUT", 0.0)
 _LOCAL_ANALYZER_TOOL_STEPS = _get_env_int("LOCAL_ANALYZER_TOOL_STEPS", 12)
 _LOCAL_ANALYZER_TOOL_TIMEOUT = _get_env_int("LOCAL_ANALYZER_TOOL_TIMEOUT", 30)
@@ -287,7 +287,7 @@ def _context_drain_floor_mode() -> bool:
     the prefix-cache hit rate. Off by default for that reason; the same average
     depth is available by raising the budget, which does not touch trim
     frequency."""
-    return _get_env_bool("ARC3_CONTEXT_DRAIN_FLOOR", True)
+    return _get_env_bool("ARC3_CONTEXT_DRAIN_FLOOR", False)
 
 
 def _context_drain_tokens() -> int:
@@ -310,7 +310,7 @@ def _context_drain_tokens() -> int:
     Size it against tokens per turn: at ~4-5k per turn including the opener,
     8-12k buys two or three clean turns between evictions. 0 (default) keeps
     the original drop-until-it-fits behavior."""
-    return max(0, _get_env_int("ARC3_CONTEXT_DRAIN_TOKENS", 4096))
+    return max(0, _get_env_int("ARC3_CONTEXT_DRAIN_TOKENS", 0))
 
 
 def _history_turn_drain() -> int:
@@ -324,7 +324,7 @@ def _history_turn_drain() -> int:
 
     Set this and the cap triggers at N but drains to N - drain, so evictions
     become periodic instead of continuous."""
-    return max(0, _get_env_int("ARC3_HISTORY_TURN_DRAIN", 10))
+    return max(0, _get_env_int("ARC3_HISTORY_TURN_DRAIN", 0))
 
 
 def _history_drain_coalesce() -> bool:
@@ -336,7 +336,7 @@ def _history_drain_coalesce() -> bool:
     Dropping turns in that same commit is therefore free, whereas letting the
     cap fire on its own a turn later costs a second invalidation. This makes
     the two mechanisms evict together rather than alternately."""
-    return _get_env_bool("ARC3_HISTORY_DRAIN_COALESCE", True)
+    return _get_env_bool("ARC3_HISTORY_DRAIN_COALESCE", False)
 
 
 def _persistent_history_assistant_turns() -> int:
@@ -4925,7 +4925,12 @@ class ToolAgent:
                 else:
                     self._consecutive_noops += 1
                 
-                if self._consecutive_noops >= 2:
+                # Dynamic Progress-Aware Stagnation Ceiling:
+                # Level 0/1: strict 2-turn stagnation alert to prevent tutorial time-sinks.
+                # Level 2+: scale ceiling to 4-5 turns to grant deep exploration time for complex multi-room puzzles.
+                stagnation_threshold = 2 if current_level <= 1 else min(5, 2 + current_level)
+                
+                if self._consecutive_noops >= stagnation_threshold:
                     lines.append(
                         f"[AVO SUPERVISOR - STAGNATION DETECTED]: Your last {self._consecutive_noops} action sequences "
                         "produced NO gameplay change in the interior board. The previous trajectory is blocked or ineffective. "
