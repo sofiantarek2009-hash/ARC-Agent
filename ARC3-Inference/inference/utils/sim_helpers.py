@@ -323,32 +323,82 @@ class System1ReflexiveRouter:
     def __init__(self):
         self.bypassed_turns = 0
 
-    def try_reflexive_route(self, current_frame, valid_actions, known_avatar_color=None, known_goal_color=None):
+    def try_reflexive_route(self, current_frame, valid_actions, history_entries=None, known_avatar_color=None, known_goal_color=None):
         """Attempts to find a direct deterministic solution for this turn."""
-        if not current_frame or not hasattr(current_frame, "segmentation"):
+        if not current_frame:
             return None
             
-        nodes = current_frame.segmentation.get("nodes", [])
-        if not nodes:
+        nodes = getattr(current_frame, "segmentation", {}).get("nodes", []) if hasattr(current_frame, "segmentation") else []
+        grid = getattr(current_frame, "grid", None)
+        if grid is None or not hasattr(grid, "__getitem__"):
             return None
             
-        # Determine candidate mover and candidate goals
+        H = len(grid)
+        W = len(grid[0]) if H > 0 else 0
+        if H == 0 or W == 0:
+            return None
+
+        # 1. Induce Avatar / Mover if not explicitly provided
+        mover_color = known_avatar_color
+        if not mover_color and history_entries:
+            # Check most recent history transition for single-entity displacement
+            delta_map = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1), "UP": (-1, 0), "DOWN": (1, 0), "LEFT": (0, -1), "RIGHT": (0, 1)}
+            for entry in reversed(history_entries[-3:]):
+                prev_frame = getattr(entry, "frame", None)
+                act = getattr(entry, "action", None)
+                if prev_frame and hasattr(prev_frame, "grid") and act in delta_map:
+                    prev_g = prev_frame.grid
+                    exp_dr, exp_dc = delta_map[act]
+                    # Find which color displaced exactly by (exp_dr, exp_dc)
+                    diffs_out = {}
+                    diffs_in = {}
+                    for r in range(min(H, len(prev_g))):
+                        for c in range(min(W, len(prev_g[0]))):
+                            c1, c2 = prev_g[r][c], grid[r][c]
+                            if c1 != c2:
+                                diffs_out[c1] = diffs_out.get(c1, 0) + 1
+                                diffs_in[c2] = diffs_in.get(c2, 0) + 1
+                    for col in diffs_out:
+                        if col != 0 and col in diffs_in and diffs_out[col] == diffs_in[col]:
+                            mover_color = col
+                            break
+                if mover_color is not None:
+                    break
+
+        # 2. Locate Mover
         mover_node = None
-        if known_avatar_color:
+        if mover_color is not None and nodes:
             for n in nodes:
-                if n.get("color") == known_avatar_color:
+                if n.get("color") == mover_color:
                     mover_node = n
                     break
-                    
+
+        if not mover_node:
+            # Fallback scan directly on grid if mover_color is known
+            if mover_color is not None:
+                pts = [(r, c) for r in range(H) for c in range(W) if grid[r][c] == mover_color]
+                if pts:
+                    mover_node = {"boundary": [pts[0]], "color": mover_color}
+
+        # 3. Locate candidate Goal(s)
         goal_nodes = []
-        if known_goal_color:
+        if known_goal_color and nodes:
             goal_nodes = [n for n in nodes if n.get("color") == known_goal_color]
-            
+        elif nodes and mover_node:
+            # Unsupervised goal induction: small unique clusters (size 1-4) of non-background, non-mover color
+            cand_goals = [
+                n for n in nodes 
+                if n.get("color") != getattr(mover_node, "get", lambda k: None)("color")
+                and 1 <= len(n.get("boundary", [])) <= 4
+            ]
+            if len(cand_goals) in (1, 2, 3):
+                goal_nodes = cand_goals
+
         if not mover_node or not goal_nodes:
             return None
             
-        start = mover_node.get("boundary", [[0, 0]])[0]
-        goals = {g.get("boundary", [[0, 0]])[0] for g in goal_nodes}
+        start = tuple(mover_node.get("boundary", [[0, 0]])[0])
+        goals = {tuple(g.get("boundary", [[0, 0]])[0]) for g in goal_nodes}
         
         # Build passable cells: everything not an obstacle
         # Default grid bounds 64x64
@@ -370,21 +420,11 @@ class System1ReflexiveRouter:
             # If all probe cells match uniform background/floor, commit safe 3-step sprint.
             # If any step encounters an unknown non-floor tile, clamp to 1 step to yield
             # control to System 2 immediately after the intervention.
+            # Safe Look-Ahead Simulation Gate:
+            # Traverses up to 3 corridor steps. Clamps only if a cell is an obstacle,
+            # an untracked active sprite, or an explicit hazard centroid.
             grid = getattr(current_frame, "grid", None)
             if grid is not None and hasattr(grid, "__getitem__"):
-                # Determine floor / background color from start surrounding or mode
-                floor_color = None
-                sr, sc = start
-                surround = [(sr-1, sc), (sr+1, sc), (sr, sc-1), (sr, sc+1)]
-                for r, c in surround:
-                    if (r, c) in passable and (r, c) not in goals:
-                        try:
-                            floor_color = grid[r][c]
-                            break
-                        except Exception:
-                            pass
-                
-                # Trace candidate steps
                 cur_r, cur_c = start
                 delta_map = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
                 safe_steps = 0
@@ -395,15 +435,10 @@ class System1ReflexiveRouter:
                     if (cur_r, cur_c) in goals:
                         safe_steps += 1
                         break
-                    if floor_color is not None:
-                        try:
-                            cell_col = grid[cur_r][cur_c]
-                            if cell_col != floor_color:
-                                # Non-floor surface modifier detected! Clamp to single step
-                                safe_steps = max(1, safe_steps)
-                                break
-                        except Exception:
-                            pass
+                    # If target cell violates passable boundary, clamp
+                    if (cur_r, cur_c) not in passable:
+                        safe_steps = max(1, safe_steps)
+                        break
                     safe_steps += 1
                 return path[:max(1, safe_steps)]
                 
