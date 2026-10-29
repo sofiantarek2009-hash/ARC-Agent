@@ -255,18 +255,12 @@ IN_REPL_SIMULATION_ADDENDUM = (
     "    - find_shortest_path(start, goals, passable_cells, grid_shape=(64,64)): ultra-fast BFS pathfinder returning optimal [1..4] action list.\n"
     "    - general_lattice_search(initial_state, goal_predicate, transition_fn, valid_actions, heuristic_fn=None): universal A*/BFS search engine over arbitrary state tuples.\n"
     "    - verify_retrodiction(simulator_func, transition_history): verifies that a model retrodicts past steps before executing new paths.\n"
-    "    - commit(planned_actions, simulator_fn=None): Verification Delta Gating. Executes planned_actions; if simulator_fn is given and actual state diverges from prediction, immediately halts at divergence point to prevent RHAE collapse.
-    "  * RHAE QUADRATIC MAXIMIZATION STRATEGY (RHAE = min(1.15, (H/A)^2)):
-"
-    "    - Level 1 represents only 3.5%-6.7% of total game score; Levels 2-N represent 93.3%-96.5% of total score.
-"
-    "    - On Level 1: explore carefully to deduce avatar, pushables, obstacles, and goal invariants, then store in memory.
-"
-    "    - On Levels 2 to N: ZERO exploratory waste! Run find_shortest_path or general_lattice_search offline in Python and call commit(plan) to achieve superhuman RHAE >= 1.0-1.15 across 93%+ of the scorecard.
-"
-"
-    "    - memory: PersistentGameMemory ledger. Retains verified kinematics, avatar/goal bindings, and invariants across turns and levels.
-"
+    "    - commit(planned_actions, simulator_fn=None): Verification Delta Gating. Executes planned_actions; if simulator_fn is given and actual state diverges from prediction, immediately halts at divergence point to prevent RHAE collapse.\n"
+    "    - memory: PersistentGameMemory ledger. Retains verified kinematics, avatar/goal bindings, and invariants across turns and levels.\n"
+    "  * RHAE QUADRATIC MAXIMIZATION STRATEGY (RHAE = min(1.15, (H/A)^2)):\n"
+    "    - Level 1 represents only 3.5%-6.7% of total game score; Levels 2-N represent 93.3%-96.5% of total score.\n"
+    "    - On Level 1: explore carefully to deduce avatar, pushables, obstacles, and goal invariants, then store in memory.\n"
+    "    - On Levels 2 to N: ZERO exploratory waste! Run find_shortest_path or general_lattice_search offline in Python and call commit(plan) to achieve superhuman RHAE >= 1.0-1.15 across 93%+ of the scorecard.\n"
     "  * ALWAYS follow the 3-step loop before executing multi-step action sequences:\n"
     "    1. Extract active entities, walls, and goal coordinates from current_frame.segmentation or current_frame._grid.\n"
     "    2. Model check: ensure your transition assumptions match observed steps. If unsure, probe with 1 action to resolve ambiguity.\n"
