@@ -380,6 +380,8 @@ class System1ReflexiveRouter:
                 if pts:
                     mover_node = {"boundary": [pts[0]], "color": mover_color}
 
+        start = tuple(mover_node.get("boundary", [[0, 0]])[0]) if mover_node else None
+
         # 3. Locate candidate Goal(s)
         goal_nodes = []
         if known_goal_color and nodes:
@@ -393,6 +395,53 @@ class System1ReflexiveRouter:
             ]
             if len(cand_goals) in (1, 2, 3):
                 goal_nodes = cand_goals
+
+        # =================================================================
+        # 1. SOKOBAN / PUSHABLE CRATE MULTI-BOX INTERCEPTOR
+        # =================================================================
+        # Detect if there are multiple pushable blocks and equal target plates
+        if mover_node and start and len(nodes) >= 3:
+            try:
+                import numpy as np
+                from inference.utils.domain_solvers import sokoban_solver
+                
+                # Identify candidates by cardinality & mass
+                mover_id = mover_node.get("id")
+                non_mover = [n for n in nodes if n.get("id") != mover_id]
+                color_groups = {}
+                for n in non_mover:
+                    c = n.get("color")
+                    color_groups.setdefault(c, []).append(n)
+                
+                # Check for equal-cardinality candidate pairs (e.g. 2-6 boxes, 2-6 plates)
+                box_color = None
+                target_color = None
+                for c1, nodes1 in color_groups.items():
+                    for c2, nodes2 in color_groups.items():
+                        if c1 != c2 and 2 <= len(nodes1) == len(nodes2) <= 8:
+                            box_color, target_color = c1, c2
+                            break
+                    if box_color:
+                        break
+                
+                if box_color and target_color:
+                    np_grid = np.array(grid, dtype=int) if not isinstance(grid, np.ndarray) else grid
+                    b_list = [tuple(n.get("boundary", [[0, 0]])[0]) for n in color_groups[box_color]]
+                    t_list = [tuple(n.get("boundary", [[0, 0]])[0]) for n in color_groups[target_color]]
+                    w_set = set()
+                    for n in non_mover:
+                        if n.get("color") not in (box_color, target_color):
+                            for pt in n.get("boundary", []):
+                                w_set.add(tuple(pt))
+                    
+                    soko_plan = sokoban_solver(
+                        np_grid, b_list, t_list, start, walls=w_set, max_expansions=3000
+                    )
+                    if soko_plan:
+                        self.bypassed_turns += 1
+                        return soko_plan[:4]  # emit safe 4-step macro burst
+            except Exception:
+                pass
 
         if not mover_node or not goal_nodes:
             return None
@@ -445,6 +494,92 @@ class System1ReflexiveRouter:
             # Default safe probe prefix (max 3 actions)
             return path[:3]
             
+        # =================================================================
+        # 4. SOKOBAN / PUSHABLE CRATE MULTI-BOX INTERCEPTOR
+        # =================================================================
+        # Detect if there are multiple pushable blocks and equal target plates
+        if mover_node and len(nodes) >= 3:
+            try:
+                import numpy as np
+                from inference.utils.domain_solvers import sokoban_solver
+                
+                # Identify candidates by cardinality & mass
+                mover_id = mover_node.get("id")
+                non_mover = [n for n in nodes if n.get("id") != mover_id]
+                color_groups = {}
+                for n in non_mover:
+                    c = n.get("color")
+                    color_groups.setdefault(c, []).append(n)
+                
+                # Check for equal-cardinality candidate pairs (e.g. 2-6 boxes, 2-6 plates)
+                box_color = None
+                target_color = None
+                for c1, nodes1 in color_groups.items():
+                    for c2, nodes2 in color_groups.items():
+                        if c1 != c2 and 2 <= len(nodes1) == len(nodes2) <= 8:
+                            # Heuristic: plates are typically single-pixel or flat, boxes are compact
+                            box_color, target_color = c1, c2
+                            break
+                    if box_color:
+                        break
+                
+                if box_color and target_color:
+                    np_grid = np.array(grid, dtype=int)
+                    b_list = [tuple(n.get("boundary", [[0, 0]])[0]) for n in color_groups[box_color]]
+                    t_list = [tuple(n.get("boundary", [[0, 0]])[0]) for n in color_groups[target_color]]
+                    w_set = set()
+                    for n in non_mover:
+                        if n.get("color") not in (box_color, target_color):
+                            for pt in n.get("boundary", []):
+                                w_set.add(tuple(pt))
+                    
+                    soko_plan = sokoban_solver(
+                        np_grid, b_list, t_list, start, walls=w_set, max_expansions=3000
+                    )
+                    if soko_plan:
+                        self.bypassed_turns += 1
+                        return soko_plan[:4]  # emit safe 4-step macro burst
+            except Exception:
+                pass
+
+        # =================================================================
+        # 5. COUPLED ESCORT JOINT-SPACE INTERCEPTOR
+        # =================================================================
+        # Detect if there is a secondary dynamic entity moving with the avatar
+        if mover_node and history_entries and len(history_entries) >= 2:
+            try:
+                from inference.utils.domain_solvers import escort_joint_astar
+                # Check if another color moved in sync with avatar across last 2 turns
+                last_entry = history_entries[-1]
+                prev_frame = getattr(last_entry, "frame", None)
+                if prev_frame and hasattr(prev_frame, "grid"):
+                    prev_g = prev_frame.grid
+                    # Find any non-mover color that also translated
+                    escort_color = None
+                    for n in nodes:
+                        c = n.get("color")
+                        if c != mover_color and c != getattr(goal_nodes[0] if goal_nodes else {}, "get", lambda k: None)("color"):
+                            pts_cur = n.get("boundary", [])
+                            if pts_cur:
+                                # check if displaced
+                                escort_color = c
+                                break
+                    if escort_color and goal_nodes:
+                        escort_pt = tuple(color_groups.get(escort_color, [{}])[0].get("boundary", [[0, 0]])[0]) if 'color_groups' in locals() else None
+                        if escort_pt:
+                            w_set = set()
+                            for n in nodes:
+                                if n.get("color") not in (mover_color, escort_color):
+                                    for pt in n.get("boundary", []):
+                                        w_set.add(tuple(pt))
+                            goal_pt = tuple(goal_nodes[0].get("boundary", [[0, 0]])[0])
+                            escort_plan = escort_joint_astar(start, escort_pt, goal_pt, w_set, grid_shape=(H, W))
+                            if escort_plan:
+                                self.bypassed_turns += 1
+                                return escort_plan[:3]
+            except Exception:
+                pass
+
         return None
 
 
