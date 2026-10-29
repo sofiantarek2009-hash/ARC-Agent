@@ -500,3 +500,106 @@ class System1ReflexiveRouter:
 
 
 
+
+
+class PersistentGameMemory:
+    """Cross-level persistent game memory ledger (Pillar 6 & 7).
+    
+    Retains verified causal invariants, avatar/goal/pushable identities, and
+    kinematic vectors across turns and levels of a game. Zero-shot transfer to Levels 2..N.
+    """
+    def __init__(self):
+        self.avatar_color = None
+        self.avatar_id = None
+        self.goal_colors = set()
+        self.pushable_colors = set()
+        self.hazard_colors = set()
+        self.wall_colors = set()
+        self.kinematics_verified = False
+        self.action_vectors = {}  # act -> (dr, dc)
+        self.active_goal_predicate = None
+        self.solved_levels = []
+        self.hypotheses = {}
+        self.disproven_theories = []
+
+    def record_transition(self, action, dr, dc, entity_role=None):
+        """Updates empirical kinematic vectors from observed displacement."""
+        if entity_role in ('avatar', 'mover', None):
+            self.action_vectors[action] = (dr, dc)
+            if len(self.action_vectors) >= 4:
+                self.kinematics_verified = True
+
+    def mark_level_solved(self, level_num):
+        """Lifts verified invariants from solved level."""
+        if level_num not in self.solved_levels:
+            self.solved_levels.append(level_num)
+
+    def to_dict(self):
+        return {
+            'avatar_color': self.avatar_color,
+            'goal_colors': list(self.goal_colors),
+            'pushable_colors': list(self.pushable_colors),
+            'wall_colors': list(self.wall_colors),
+            'action_vectors': dict(self.action_vectors),
+            'solved_levels': list(self.solved_levels),
+            'kinematics_verified': self.kinematics_verified,
+        }
+
+
+def make_verification_commit(action_callable, current_frame_getter, delta_map=None):
+    """Factory for Verification Delta Gating commit() primitive (Pillar 10).
+    
+    Executes planned_actions one by one or in micro-batches; checks intermediate state
+    against predicted outcome. Aborts instantly on divergence to preserve RHAE.
+    """
+    active_delta_map = delta_map or {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+    def commit(planned_actions, simulator_fn=None, avatar_color=None):
+        if not planned_actions:
+            return {'executed': False, 'status': 'empty_plan'}
+            
+        executed_so_far = []
+        for i, act in enumerate(planned_actions):
+            prev_frame = current_frame_getter()
+            res = action_callable(act)
+            executed_so_far.append(act)
+            
+            # Check terminal conditions
+            if res.get('run_complete') or res.get('level_completed') or res.get('game_over') or res.get('done'):
+                res['executed_count'] = len(executed_so_far)
+                res['executed_actions'] = executed_so_far
+                return res
+                
+            curr_frame = current_frame_getter()
+            if simulator_fn is not None and prev_frame is not None and curr_frame is not None:
+                # Compare predicted state with actual state
+                expected_next = simulator_fn(prev_frame, act)
+                if expected_next is not None and hasattr(curr_frame, 'grid'):
+                    actual_grid = curr_frame.grid
+                    exp_grid = expected_next.grid if hasattr(expected_next, 'grid') else expected_next
+                    if actual_grid != exp_grid:
+                        # Divergence detected: abort remaining actions immediately!
+                        res['status'] = 'verification_divergence_halt'
+                        res['halt_step_index'] = i
+                        res['remaining_aborted'] = planned_actions[i+1:]
+                        res['executed_count'] = len(executed_so_far)
+                        res['executed_actions'] = executed_so_far
+                        return res
+                        
+            # If action changed nothing in interior board and was not expected to be a no-op, halt
+            if res.get('gameplay_changed') is False and res.get('executed'):
+                res['status'] = 'noop_halt'
+                res['halt_step_index'] = i
+                res['remaining_aborted'] = planned_actions[i+1:]
+                res['executed_count'] = len(executed_so_far)
+                res['executed_actions'] = executed_so_far
+                return res
+
+        return {
+            'executed': True,
+            'status': 'completed',
+            'executed_count': len(executed_so_far),
+            'executed_actions': executed_so_far,
+        }
+
+    return commit
