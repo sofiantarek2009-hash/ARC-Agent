@@ -3599,6 +3599,8 @@ class ToolAgent:
         self._kept_functions: dict[str, str] = {}
         self._last_animation_chain: list[Any] = []
         self._system1_router = System1ReflexiveRouter()
+        from inference.utils.sim_helpers import PersistentGameMemory
+        self._persistent_game_memory = PersistentGameMemory()
         self._system1_interceptions = 0
         self._last_action_gameplay_changed: bool | None = None
         self._pending_animation_image: dict[str, Any] | None = None
@@ -6677,10 +6679,19 @@ class ToolAgent:
         # execute it directly in the environment WITHOUT invoking the LLM.
         # This completely eliminates LLM text-guessing loops, maximizes RHAE, and preserves VRAM.
         if self._step_env_callback is not None and current_frame is not None:
+            # Auto-hydrate known avatar/goal colors from persistent memory if present
+            known_avatar = getattr(getattr(self, "_persistent_game_memory", None), "avatar_color", None)
+            known_goal = None
+            goal_set = getattr(getattr(self, "_persistent_game_memory", None), "goal_colors", None)
+            if goal_set and len(goal_set) == 1:
+                known_goal = next(iter(goal_set))
+
             reflexive_plan = self._system1_router.try_reflexive_route(
                 current_frame,
                 self._current_valid_actions,
                 history_entries=history_entries,
+                known_avatar_color=known_avatar,
+                known_goal_color=known_goal,
             )
             if reflexive_plan:
                 action_name_map = {1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT"}
