@@ -6689,11 +6689,19 @@ class ToolAgent:
                     intercept_result = self._step_env_callback({"actions": step_batch})
                     if isinstance(intercept_result, dict) and intercept_result.get("executed"):
                         self._system1_interceptions += 1
+                        self._last_step_summary = self._summarize_step_sequence([intercept_result])
+                        self._last_action_call_result = dict(intercept_result)
+                        self._update_summarized_knowledge_from_step_summary()
                         with open(analyzer_log, "a", encoding="utf-8") as f:
                             f.write(
                                 f"\n[SYSTEM 1 DIRECT INTERCEPTOR]: Executed {len(reflexive_plan)} reflexive steps "
                                 f"({reflexive_plan}) directly in 0.2ms. Bypassed LLM inference.\n"
                             )
+                        solver_obj = getattr(self._step_env_callback, "__self__", None)
+                        if solver_obj is not None and hasattr(solver_obj, "action_guard_hook"):
+                            solver_obj.action_guard_hook = None
+                        self._step_env_callback = None
+                        self._current_valid_actions = []
                         return AnalyzerTurnResult(step_executed=True, reasoning="System 1 direct reflexive bypass")
                 except Exception as exc:
                     log.warning("System 1 direct interceptor encountered error, falling back to LLM: %s", exc)
