@@ -5,6 +5,8 @@ can be spliced verbatim into the Python-tool sandbox bootstrap.
 """
 
 from collections import deque
+import heapq
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 _DELTAS = {
     1: (-1, 0),  # UP
@@ -51,6 +53,52 @@ def find_shortest_path(start, goals, passable_cells, grid_shape=(64, 64)):
                 if (nxt in passable or nxt in goals) and nxt not in visited:
                     visited.add(nxt)
                     queue.append((nxt, path + [act]))
+    return []
+
+def general_lattice_search(
+    initial_state: Any,
+    goal_predicate: Callable[[Any], bool],
+    transition_fn: Callable[[Any, int], Optional[Any]],
+    valid_actions: Optional[List[int]] = None,
+    heuristic_fn: Optional[Callable[[Any], float]] = None,
+    max_expansions: int = 10000,
+) -> List[int]:
+    """Universal state-space heuristic search primitive for REPL and harness.
+    
+    Accepts arbitrary state representations (e.g. coordinates, sets of boxes,
+    tensors, registers) and model-defined transition functions.
+    Computes the strictly minimal action sequence to satisfy goal_predicate.
+    """
+    actions = valid_actions or [1, 2, 3, 4]
+    
+    if goal_predicate(initial_state):
+        return []
+        
+    h0 = heuristic_fn(initial_state) if heuristic_fn else 0.0
+    heap = [(h0, 0, initial_state, [])]
+    visited = {initial_state: 0}
+    expansions = 0
+    
+    while heap and expansions < max_expansions:
+        f, g, state, path = heapq.heappop(heap)
+        expansions += 1
+        
+        if goal_predicate(state):
+            return path
+            
+        for act in actions:
+            try:
+                nxt = transition_fn(state, act)
+            except Exception:
+                nxt = None
+            if nxt is None:
+                continue
+            cost = g + 1
+            if nxt not in visited or cost < visited[nxt]:
+                visited[nxt] = cost
+                h_val = heuristic_fn(nxt) if heuristic_fn else 0.0
+                heapq.heappush(heap, (cost + h_val, cost, nxt, path + [act]))
+                
     return []
 
 def verify_retrodiction(simulator_func, transition_history):

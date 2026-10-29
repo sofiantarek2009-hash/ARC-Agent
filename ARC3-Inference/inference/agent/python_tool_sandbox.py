@@ -411,6 +411,7 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["last_action"] = last_transition.action if last_transition is not None else None
             runtime_globals["frame_diff"] = frame_diff
             runtime_globals["find_shortest_path"] = find_shortest_path
+            runtime_globals["general_lattice_search"] = general_lattice_search
             runtime_globals["verify_retrodiction"] = verify_retrodiction
             runtime_globals["solve_pushable_crates"] = solve_pushable_crates
             runtime_globals["solve_bipartite_assignment"] = solve_bipartite_assignment
