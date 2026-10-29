@@ -417,12 +417,13 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["solve_bipartite_assignment"] = solve_bipartite_assignment
             runtime_globals["AVOPopulationSupervisor"] = AVOPopulationSupervisor
             runtime_globals["System1ReflexiveRouter"] = System1ReflexiveRouter
-            runtime_globals["PersistentGameMemory"] = getattr(_sim_helpers, "PersistentGameMemory", None)
-            if "_persistent_game_memory" not in runtime_globals and hasattr(_sim_helpers, "PersistentGameMemory"):
-                runtime_globals["memory"] = _sim_helpers.PersistentGameMemory()
-                runtime_globals["_persistent_game_memory"] = runtime_globals["memory"]
-            elif "_persistent_game_memory" in runtime_globals:
-                runtime_globals["memory"] = runtime_globals["_persistent_game_memory"]
+            if "PersistentGameMemory" in globals():
+                runtime_globals["PersistentGameMemory"] = PersistentGameMemory
+                if "_persistent_game_memory" not in runtime_globals:
+                    runtime_globals["memory"] = PersistentGameMemory()
+                    runtime_globals["_persistent_game_memory"] = runtime_globals["memory"]
+                else:
+                    runtime_globals["memory"] = runtime_globals["_persistent_game_memory"]
             if "_avo_supervisor" not in runtime_globals:
                 runtime_globals["avo"] = AVOPopulationSupervisor()
                 runtime_globals["_avo_supervisor"] = runtime_globals["avo"]
@@ -619,8 +620,8 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             ]
 
         runtime_globals["action"] = action
-        if hasattr(_sim_helpers, "make_verification_commit"):
-            runtime_globals["commit"] = _sim_helpers.make_verification_commit(
+        if "make_verification_commit" in globals():
+            runtime_globals["commit"] = make_verification_commit(
                 action,
                 lambda: runtime_globals.get("current_frame"),
             )
