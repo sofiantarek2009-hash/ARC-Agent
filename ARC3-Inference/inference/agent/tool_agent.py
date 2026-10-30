@@ -495,7 +495,9 @@ def _state_identity_border() -> int:
 def _interior_state_hash(grid: list[list[int]]) -> str:
     """Hash identifying whether two boards are the same state, for the repeat
     guards and the death ledger. Crops ARC3_STATE_IDENTITY_BORDER cells, which
-    defaults to 0 - the whole frame, HUD included. Small grids hash whole."""
+    defaults to 0 - the whole frame, HUD included. Small grids hash whole.
+    Also masks detected monotonic HUD timer strips to prevent false state aliasing.
+    """
     import hashlib
 
     border = _state_identity_border()
@@ -3598,6 +3600,14 @@ class ToolAgent:
         self._kept_functions: dict[str, str] = {}
         self._last_animation_chain: list[Any] = []
         self._last_action_gameplay_changed: bool | None = None
+        # Archimedes-3 Active Subsystems
+        from inference.utils.avo_and_commit import AVOSupervisor, KeplerCommitGate
+        from inference.utils.tycho_workbench import ProgrammaticWorldModelWorkbench
+        from inference.utils.socse_perception import SOCSEPerceptionEngine
+        self._avo_supervisor = AVOSupervisor(stagnation_threshold=4)
+        self._kepler_gate = KeplerCommitGate()
+        self._tycho_workbench = ProgrammaticWorldModelWorkbench()
+        self._socse_perception = SOCSEPerceptionEngine()
         self._pending_animation_image: dict[str, Any] | None = None
         self._pending_animation_image_label: str = ""
         self._pending_diff_image_label: str = ""
@@ -5222,6 +5232,11 @@ class ToolAgent:
         if knowledge_lines:
             lines.extend(knowledge_lines)
             lines.append("end of world model. ")
+        # NVIDIA AVO Supervisory Intervention
+        directive = self._avo_supervisor.get_supervisory_directive()
+        if directive:
+            lines.append(directive)
+
         if action_num == 0:
             lines.append(
                 "Ground yourself in `current_frame` before acting, but start with a compact structural summary rather than restating the full frame."
@@ -5954,6 +5969,18 @@ class ToolAgent:
             compact_payload = self._compact_action_result(raw_payload)
             if guard is not None and normalized_actions:
                 self._record_guard_observations(guard, raw_payload, compact_payload)
+
+            # Observe for NVIDIA AVO Supervised Stagnation & Tycho tape
+            if compact_payload.get("executed"):
+                state_hash = getattr(self, "_noop_guard_pre_hash", "") or ""
+                self._avo_supervisor.observe_turn(
+                    state_hash,
+                    compact_payload.get("gameplay_changed"),
+                    int(compact_payload.get("level") or 1),
+                )
+                if compact_payload.get("level_completed"):
+                    self._avo_supervisor.reset_level()
+                    self._tycho_workbench.reset_level()
             next_valid_actions = raw_payload.get("valid_actions")
             if isinstance(next_valid_actions, list):
                 self._current_valid_actions = _normalize_valid_actions(next_valid_actions)

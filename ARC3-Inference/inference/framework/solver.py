@@ -1132,11 +1132,10 @@ class _HarnessGameSession:
                 stop_reason = "level_completed"
                 break
             if (
-                BATCH_NOOP_BLOCK
-                and NOOP_GUARD_BORDER_WIDTH > 0
-                and batch_size >= 2
+                batch_size >= 2
                 and not payload.get("gameplay_changed", True)
             ):
+                # Kepler Pre-Action Commit Gate: unexpected no-op in multi-step batch aborts immediately
                 stop_reason = "no_op_action"
                 break
 
