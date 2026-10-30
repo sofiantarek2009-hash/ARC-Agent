@@ -5191,6 +5191,7 @@ class ToolAgent:
         lines.extend(
             [
                 "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_call_result`, `frame_diff(before, after)`, and `action(actions)`.",
+                "Programmatic Workbench tools: `workbench.retrodict_hypothesis(fn)` (tests your transition function against 100% past turns), `planner.solve(grid, valid_actions, fn, goal_fn)` (A* search with HUD masking), and `socse.get_connected_components(grid)`.",
                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
@@ -5978,6 +5979,22 @@ class ToolAgent:
                     compact_payload.get("gameplay_changed"),
                     int(compact_payload.get("level") or 1),
                 )
+                # Lossless Tycho transition tape recording
+                refreshed_frame, refreshed_history = load_runtime_state(state_path)
+                if len(refreshed_history) >= 2:
+                    before_entry = refreshed_history[-2]
+                    after_entry = refreshed_history[-1]
+                    if before_entry.frame is not None and after_entry.frame is not None:
+                        self._tycho_workbench.record_transition(
+                            turn_idx=int(compact_payload.get("action_num") or len(refreshed_history)),
+                            before_grid=before_entry.frame.grid,
+                            action=str(compact_payload.get("action") or ""),
+                            action_data={},
+                            after_grid=after_entry.frame.grid,
+                            gameplay_changed=bool(compact_payload.get("gameplay_changed")),
+                            game_over=bool(compact_payload.get("game_over")),
+                            level_completed=bool(compact_payload.get("level_completed")),
+                        )
                 if compact_payload.get("level_completed"):
                     self._avo_supervisor.reset_level()
                     self._tycho_workbench.reset_level()
