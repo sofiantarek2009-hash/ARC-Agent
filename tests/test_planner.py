@@ -49,3 +49,64 @@ class TestPlanner(unittest.TestCase):
     def test_planner_suite(self) -> None:
         test_astar_and_2d_sokoban_planner()
         test_duck_repl_codeact()
+
+    def test_symbolic_puct_planner(self) -> None:
+        from inference.utils.symbolic_planner import StateEquivalenceAStarPlanner
+        from inference.utils.sim_helpers import PurePythonAStarPlanner
+
+        initial_grid = [
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 0, 2],
+        ]
+        valid_actions = ["ACTION1", "ACTION2", "ACTION3", "ACTION4"]
+
+        # Transition model: moves 1 right on ACTION4, down on ACTION2
+        def model_1(grid, action):
+            g = [list(r) for r in grid]
+            r, c = None, None
+            for i in range(len(g)):
+                for j in range(len(g[0])):
+                    if g[i][j] == 1:
+                        r, c = i, j
+            if r is None:
+                return g
+            dr, dc = 0, 0
+            if action == "ACTION4":
+                dc = 1
+            elif action == "ACTION2":
+                dr = 1
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < len(g) and 0 <= nc < len(g[0]):
+                g[r][c] = 0
+                g[nr][nc] = 1
+            return g
+
+        def goal_fn(grid):
+            # Goal is reached when 1 lands on (2, 2)
+            return grid[2][2] == 1
+
+        # Test StateEquivalenceAStarPlanner.solve_puct
+        plan = StateEquivalenceAStarPlanner.solve_puct(
+            initial_grid,
+            valid_actions,
+            [model_1],
+            goal_fn,
+            max_depth=10,
+            num_simulations=50,
+        )
+        assert plan is not None
+        assert len(plan) >= 2
+
+        # Test PurePythonAStarPlanner.solve_puct
+        pure_plan = PurePythonAStarPlanner.solve_puct(
+            initial_grid,
+            valid_actions,
+            [model_1],
+            goal_fn,
+            max_depth=10,
+            num_simulations=50,
+        )
+        assert pure_plan is not None
+        assert len(pure_plan) >= 2
+

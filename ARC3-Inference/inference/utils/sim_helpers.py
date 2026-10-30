@@ -5,6 +5,7 @@ can be spliced verbatim into the Python-tool sandbox bootstrap.
 """
 
 from collections import deque
+import math
 
 _DELTAS = {
     1: (-1, 0),  # UP
@@ -530,7 +531,7 @@ class PurePythonBOEDProber:
 
 
 class PurePythonAStarPlanner:
-    """Deterministic State-Equivalence A* Shortest-Path Search with HUD Masking."""
+    """Deterministic State-Equivalence A* & Belief-Space PUCT Planner with HUD Masking (§10.2)."""
 
     @staticmethod
     def solve(initial_grid, valid_actions, transition_fn, goal_fn, masked_strips=None, max_depth=35):
@@ -579,4 +580,153 @@ class PurePythonAStarPlanner:
                     q.append((nxt_grid, path + [act]))
 
         return None
+
+    @classmethod
+    def solve_puct(
+        cls,
+        initial_grid,
+        valid_actions,
+        transition_models,
+        goal_fn,
+        masked_strips=None,
+        max_depth=20,
+        num_simulations=60,
+        c_puct=1.414,
+    ):
+        """Belief-Space PUCT Planner over an ensemble of competing transition hypotheses (§10.2)."""
+        if not transition_models or not valid_actions:
+            return None
+
+        if goal_fn(initial_grid):
+            return []
+
+        def hash_grid(g):
+            h = len(g)
+            w = len(g[0]) if h > 0 else 0
+            rows = []
+            for r in range(h):
+                r_vals = []
+                for c in range(w):
+                    if masked_strips and (('row', r) in masked_strips or ('col', c) in masked_strips):
+                        r_vals.append(-1)
+                    else:
+                        r_vals.append(g[r][c])
+                rows.append(tuple(r_vals))
+            return hash(tuple(rows))
+
+        h_init = hash_grid(initial_grid)
+        N = {}
+        W = {}
+        state_grids = {h_init: initial_grid}
+
+        for _ in range(num_simulations):
+            curr_h = h_init
+            search_path = []
+            depth = 0
+            curr_val = 0.0
+
+            while depth < max_depth:
+                curr_grid = state_grids[curr_h]
+                if goal_fn(curr_grid):
+                    curr_val = 1.0
+                    break
+
+                total_state_visits = sum(N.get((curr_h, a), 0) for a in valid_actions) + 1
+
+                best_action = None
+                best_score = -float('inf')
+
+                for a in valid_actions:
+                    n_a = N.get((curr_h, a), 0)
+                    w_a = W.get((curr_h, a), 0.0)
+                    q_a = (w_a / n_a) if n_a > 0 else 0.0
+                    p_prior = 1.0 / len(valid_actions)
+                    u_a = c_puct * p_prior * (math.sqrt(total_state_visits) / (1 + n_a))
+                    score = q_a + u_a
+                    if score > best_score:
+                        best_score = score
+                        best_action = a
+
+                if best_action is None:
+                    break
+
+                search_path.append((curr_h, best_action))
+
+                candidate_next_grids = []
+                for model in transition_models:
+                    try:
+                        nxt = model([list(r) for r in curr_grid], best_action)
+                        if nxt is not None:
+                            candidate_next_grids.append(nxt)
+                    except Exception:
+                        continue
+
+                if not candidate_next_grids:
+                    break
+
+                next_grid = candidate_next_grids[0]
+                next_h = hash_grid(next_grid)
+                state_grids[next_h] = next_grid
+
+                is_unseen = ((curr_h, best_action) not in N)
+                curr_h = next_h
+                depth += 1
+
+                if goal_fn(next_grid):
+                    curr_val = 1.0
+                    break
+
+                if is_unseen:
+                    rollout_g = [list(r) for r in state_grids[curr_h]]
+                    for _r in range(min(10, max_depth - depth)):
+                        if goal_fn(rollout_g):
+                            curr_val = 1.0
+                            break
+                        candidate_acts = [act for act in valid_actions if act in ("ACTION2", "ACTION4")] or valid_actions
+                        act = candidate_acts[hash((curr_h, depth, _r)) % len(candidate_acts)]
+                        try:
+                            rollout_g = transition_models[0](rollout_g, act)
+                        except Exception:
+                            break
+                    else:
+                        curr_val = 1.0 if goal_fn(rollout_g) else 0.0
+                    break
+
+            for s_h, a in search_path:
+                N[(s_h, a)] = N.get((s_h, a), 0) + 1
+                W[(s_h, a)] = W.get((s_h, a), 0.0) + curr_val
+
+        curr_h = h_init
+        plan = []
+        visited_in_extract = {curr_h}
+
+        for _ in range(max_depth):
+            curr_grid = state_grids[curr_h]
+            if goal_fn(curr_grid):
+                return plan
+
+            best_a = None
+            max_n = -1
+            for a in valid_actions:
+                visits = N.get((curr_h, a), 0)
+                if visits > max_n:
+                    max_n = visits
+                    best_a = a
+
+            if best_a is None or max_n <= 0:
+                break
+
+            plan.append(best_a)
+            try:
+                nxt = transition_models[0]([list(r) for r in curr_grid], best_a)
+                next_h = hash_grid(nxt)
+                if next_h in visited_in_extract:
+                    break
+                visited_in_extract.add(next_h)
+                curr_h = next_h
+                state_grids[curr_h] = nxt
+            except Exception:
+                break
+
+        return plan if plan else None
 

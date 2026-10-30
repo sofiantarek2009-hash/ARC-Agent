@@ -62,3 +62,18 @@ def test_wipe_cross_game():
     assert len(mem.visited_state_graph) == 0
     assert len(mem.semantic_rules) == 0
     assert not mem.is_known_fatal(101, "ACTION2")
+
+
+def test_render_ledger_prompt():
+    mem = FiveTierMemoryManager(current_game_id="game_alpha")
+    mem.register_rule("rule_1", "Moving right moves avatar", status="VALIDATED")
+    mem.record_transition(1, 100, "ACTION1", 100, gameplay_changed=False)
+    mem.record_transition(2, 100, "ACTION2", 0, gameplay_changed=True, is_death=True)
+
+    rendered = mem.render_ledger_prompt()
+    assert "[FIVE-TIER MEMORY HIERARCHY]" in rendered
+    assert "Level: 1" in rendered
+    assert "rule_1: Moving right moves avatar" in rendered
+    assert "Fatal Ledger: 1 terminal actions" in rendered
+    assert "NoOp Ledger: 1 no-ops" in rendered
+

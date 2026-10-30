@@ -122,3 +122,22 @@ class FiveTierMemoryManager:
         self.candidate_goals.clear()
         self.fatal_ledger.clear()
         self.noop_ledger.clear()
+
+    def render_ledger_prompt(self) -> str:
+        """Renders compact sub-500 token markdown ledger for prompt tail (§11.2)."""
+        lines = ["[FIVE-TIER MEMORY HIERARCHY]"]
+        lines.append(f"- Level: {self.current_level} | Visited States: {len(self.visited_state_graph)} | Recorded Transitions: {len(self.episodic_tape)}")
+
+        if self.semantic_rules:
+            lines.append("- Semantic Verified Rules:")
+            for r_id, r in list(self.semantic_rules.items())[-5:]:
+                lines.append(f"  * [{r.status}] {r.rule_id}: {r.description} (conf={r.confidence:.2f})")
+
+        if self.fatal_ledger:
+            lines.append(f"- Fatal Ledger: {len(self.fatal_ledger)} terminal actions identified (guaranteed death avoided)")
+
+        if self.noop_ledger:
+            lines.append(f"- NoOp Ledger: {len(self.noop_ledger)} no-ops cataloged for current level")
+
+        return "\n".join(lines)
+

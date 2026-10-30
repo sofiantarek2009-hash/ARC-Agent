@@ -3708,6 +3708,13 @@ class ToolAgent:
             self._consecutive_noops = 0
             self._pending_wm_rebuild_reason = ""
             self._pending_wm_revise_reason = ""
+            # Archimedes-3 Cross-Game Isolation (§11.2)
+            if hasattr(self, "_five_tier_memory"):
+                self._five_tier_memory.wipe_cross_game(str(runtime_dir.name))
+            if hasattr(self, "_avo_supervisor"):
+                self._avo_supervisor.reset_level()
+            if hasattr(self, "_tycho_workbench"):
+                self._tycho_workbench.reset_level()
 
     @property
     def total_tokens(self) -> int:
@@ -5270,6 +5277,13 @@ class ToolAgent:
                 lines.append(
                     "[SPEED-DEPTH BOED: PHASE IV BUDGET CRITICAL] Action budget warning. Suppress exploratory probing and execute direct shortest-path solutions to clear level."
                 )
+        except Exception:
+            pass
+
+        # Five-Tier Memory Ledger Injection (§11.2)
+        try:
+            if hasattr(self, "_five_tier_memory") and (self._five_tier_memory.semantic_rules or self._five_tier_memory.fatal_ledger):
+                lines.append(self._five_tier_memory.render_ledger_prompt())
         except Exception:
             pass
 
