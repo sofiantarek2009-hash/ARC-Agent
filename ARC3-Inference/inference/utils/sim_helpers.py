@@ -793,3 +793,229 @@ class PurePythonAStarPlanner:
 
         return plan if plan else None
 
+
+class PurePythonFaultLocalizer:
+    """Sandbox-safe 5-Type Abductive Fault Localizer (§16.1 & §18.1).
+    
+    Classifies surprises into Type A (No-Op), Type B (Kinematics), Type C (Non-local),
+    Type D (Latent state aliasing), or Type E (Fatal termination).
+    """
+
+    def __init__(self, abstain_val=-1):
+        self.abstain_val = abstain_val
+
+    def classify_surprise(
+        self,
+        before_grid,
+        action,
+        actual_grid,
+        predicted_grid=None,
+        actual_status="PLAYABLE",
+        predicted_status="PLAYABLE",
+        history_transitions=None,
+        hud_rows=None,
+        hud_cols=None,
+    ):
+        hud_r_set = set(hud_rows or [])
+        hud_c_set = set(hud_cols or [])
+        h = len(actual_grid)
+        w = len(actual_grid[0]) if h > 0 else 0
+
+        # Type E Check: Fatal Termination
+        if actual_status == "DEATH" and predicted_status != "DEATH":
+            colliding = []
+            for r in range(h):
+                if r in hud_r_set:
+                    continue
+                for c in range(w):
+                    if c in hud_c_set:
+                        continue
+                    if before_grid[r][c] != actual_grid[r][c]:
+                        colliding.append((r, c, before_grid[r][c], actual_grid[r][c]))
+            is_timer = len(colliding) == 0
+            cause = "BUDGET_EXHAUSTION" if is_timer else "LETHAL_HAZARD_COLLISION"
+            msg = (
+                f"Action '{action}' caused GAME_OVER via timer exhaustion."
+                if is_timer
+                else f"Action '{action}' caused GAME_OVER via interior hazard collision at {colliding[:4]}."
+            )
+            return {
+                "error_type": "TYPE_E",
+                "root_cause": cause,
+                "diagnostic_message": msg,
+                "colliding_cells": colliding[:8],
+            }
+
+        # Check interior changes between before and actual
+        interior_changes = []
+        for r in range(h):
+            if r in hud_r_set:
+                continue
+            for c in range(w):
+                if c in hud_c_set:
+                    continue
+                if before_grid[r][c] != actual_grid[r][c]:
+                    interior_changes.append((r, c, before_grid[r][c], actual_grid[r][c]))
+
+        has_change = len(interior_changes) > 0
+
+        # Discrepancies with prediction
+        discrepancies = []
+        predicts_change = False
+        if predicted_grid is not None:
+            for r in range(h):
+                if r in hud_r_set:
+                    continue
+                for c in range(w):
+                    if c in hud_c_set:
+                        continue
+                    pv = predicted_grid[r][c]
+                    bv = before_grid[r][c]
+                    av = actual_grid[r][c]
+                    if pv != self.abstain_val and pv != bv:
+                        predicts_change = True
+                    if pv != self.abstain_val and pv != av:
+                        discrepancies.append((r, c, pv, av))
+
+        # Type A: Unexpected No-Op
+        if not has_change and (predicts_change or len(discrepancies) > 0):
+            return {
+                "error_type": "TYPE_A",
+                "root_cause": "UNEXPECTED_NO_OP",
+                "diagnostic_message": (
+                    f"Action '{action}' produced 0 interior grid mutations despite predicting movement. "
+                    f"Root cause: Unmodeled solid obstacle or impassable boundary."
+                ),
+            }
+
+        # Type D: Latent State Aliasing (identical past observation produced different outcome)
+        if history_transitions:
+            b_hash = hash(tuple(before_grid[r][c] for r in range(h) if r not in hud_r_set for c in range(w) if c not in hud_c_set))
+            a_hash = hash(tuple(actual_grid[r][c] for r in range(h) if r not in hud_r_set for c in range(w) if c not in hud_c_set))
+            for prev in history_transitions:
+                pb = prev.get("before_grid")
+                pa = prev.get("action")
+                pafter = prev.get("after_grid")
+                if pb and pa == action:
+                    pb_h = hash(tuple(pb[r][c] for r in range(len(pb)) if r not in hud_r_set for c in range(len(pb[0])) if c not in hud_c_set))
+                    if pb_h == b_hash:
+                        pafter_h = hash(tuple(pafter[r][c] for r in range(len(pafter)) if r not in hud_r_set for c in range(len(pafter[0])) if c not in hud_c_set))
+                        if pafter_h != a_hash:
+                            return {
+                                "error_type": "TYPE_D",
+                                "root_cause": "LATENT_STATE_ALIASING",
+                                "diagnostic_message": (
+                                    f"Non-injective transition for action '{action}'. Identical visible state at turn "
+                                    f"{prev.get('turn_idx', '?')} produced different result. Root cause: Hidden internal state h_t."
+                                ),
+                            }
+
+        if not discrepancies:
+            return {
+                "error_type": "NONE",
+                "root_cause": "CONCORDANT",
+                "diagnostic_message": "Actual grid concordant with prediction.",
+            }
+
+        # Distinguish Type B (Kinematics) vs Type C (Non-local side effect)
+        rows = [r for (r, c, _, _) in discrepancies]
+        cols = [c for (r, c, _, _) in discrepancies]
+        span = max(max(rows) - min(rows), max(cols) - min(cols)) if rows else 0
+
+        action_origin_coords = []
+        for r in range(h):
+            if r in hud_r_set:
+                continue
+            for c in range(w):
+                if c in hud_c_set:
+                    continue
+                if before_grid[r][c] != actual_grid[r][c] and (r, c) not in [(dr, dc) for dr, dc, _, _ in discrepancies]:
+                    action_origin_coords.append((r, c))
+
+        dist_from_origin = 0
+        if action_origin_coords:
+            for dr, dc, _, _ in discrepancies:
+                min_d = min(abs(dr - or_r) + abs(dc - or_c) for or_r, or_c in action_origin_coords)
+                dist_from_origin = max(dist_from_origin, min_d)
+
+        if span <= 4 and dist_from_origin <= 3:
+            return {
+                "error_type": "TYPE_B",
+                "root_cause": "LOCALIZED_KINEMATICS_ERROR",
+                "diagnostic_message": (
+                    f"Kinematic divergence for '{action}': entity displacement span ({span}) differs from prediction. "
+                    f"Likely multi-cell slide, bounce, or diagonal move."
+                ),
+                "mismatches": discrepancies[:5],
+            }
+        else:
+            return {
+                "error_type": "TYPE_C",
+                "root_cause": "NON_LOCAL_CONTACT_EFFECT",
+                "diagnostic_message": (
+                    f"Non-local effect for '{action}': changes span {span} cells across board (dist from origin={dist_from_origin}). "
+                    f"Likely switch/door connection, portal, or global field effect."
+                ),
+                "mismatches": discrepancies[:6],
+            }
+
+
+class PurePythonCommitGate:
+    """Pre-Action Commit Verifier & Surprise Gate in Sandbox (§10.3 & §16.1)."""
+
+    def __init__(self, abstain_val=-1):
+        self.localizer = PurePythonFaultLocalizer(abstain_val=abstain_val)
+        self.active_plan = []
+        self.expected_frames = []
+        self.expected_outcomes = []
+        self.last_fault = None
+
+    def commit_plan(self, action_seq, expected_frames=None, expected_outcomes=None):
+        self.active_plan = list(action_seq)
+        self.expected_frames = list(expected_frames or [])
+        self.expected_outcomes = list(expected_outcomes or [])
+        self.last_fault = None
+
+    def evaluate_step(
+        self,
+        before_grid,
+        action,
+        actual_grid,
+        step_idx=0,
+        actual_status="PLAYABLE",
+        predicted_frame=None,
+        predicted_outcome="PLAYABLE",
+        history_transitions=None,
+        hud_rows=None,
+        hud_cols=None,
+    ):
+        pred_f = predicted_frame if predicted_frame is not None else (
+            self.expected_frames[step_idx] if step_idx < len(self.expected_frames) else None
+        )
+        pred_out = predicted_outcome if predicted_outcome != "PLAYABLE" else (
+            self.expected_outcomes[step_idx] if step_idx < len(self.expected_outcomes) else "PLAYABLE"
+        )
+
+        diag = self.localizer.classify_surprise(
+            before_grid=before_grid,
+            action=action,
+            actual_grid=actual_grid,
+            predicted_grid=pred_f,
+            actual_status=actual_status,
+            predicted_status=pred_out,
+            history_transitions=history_transitions,
+            hud_rows=hud_rows,
+            hud_cols=hud_cols,
+        )
+
+        is_surprise = diag["error_type"] != "NONE"
+        if is_surprise:
+            self.last_fault = diag
+            self.active_plan.clear()
+            self.expected_frames.clear()
+            self.expected_outcomes.clear()
+            return True, diag
+
+        return False, None
+
+

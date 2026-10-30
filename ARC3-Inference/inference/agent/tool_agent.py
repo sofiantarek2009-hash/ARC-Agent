@@ -3607,6 +3607,7 @@ class ToolAgent:
         from inference.utils.five_tier_memory import FiveTierMemoryManager
         from inference.utils.animation_event_compiler import AnimationEventCompiler
         from inference.utils.boed_acquisition import SpeedDepthBOEDAcquisition
+        from inference.utils.abductive_fault_localizer import AbductiveFaultLocalizer
         self._avo_supervisor = AVOSupervisor(stagnation_threshold=4)
         self._kepler_gate = KeplerCommitGate()
         self._tycho_workbench = ProgrammaticWorldModelWorkbench()
@@ -3614,6 +3615,8 @@ class ToolAgent:
         self._five_tier_memory = FiveTierMemoryManager()
         self._animation_event_compiler = AnimationEventCompiler()
         self._boed_prober = SpeedDepthBOEDAcquisition()
+        self._fault_localizer = AbductiveFaultLocalizer()
+        self._last_abductive_fault = None
         self._pending_animation_image: dict[str, Any] | None = None
         self._pending_animation_image_label: str = ""
         self._pending_diff_image_label: str = ""
@@ -5287,6 +5290,16 @@ class ToolAgent:
         except Exception:
             pass
 
+        # Abductive Fault Diagnostic Injection (§16.1)
+        if getattr(self, "_last_abductive_fault", None):
+            fault = self._last_abductive_fault
+            lines.append(
+                f"\n[ABDUCTIVE FAULT LOCALIZER - {fault.error_type} ({fault.root_cause})]:\n"
+                f"{fault.diagnostic_message}\n"
+                f"Action Guidance: {fault.suggested_action}"
+            )
+            self._last_abductive_fault = None
+
         if action_num == 0:
             lines.append(
                 "Ground yourself in `current_frame` before acting, but start with a compact structural summary rather than restating the full frame."
@@ -6059,6 +6072,29 @@ class ToolAgent:
                     )
                 except Exception:
                     pass
+
+                # Abductive Fault Classification on unexpected no-op or death (§16.1)
+                if (compact_payload.get("gameplay_changed") is False or compact_payload.get("game_over")) and len(refreshed_history) >= 2:
+                    try:
+                        b_grid = refreshed_history[-2].frame.grid
+                        a_grid = refreshed_history[-1].frame.grid
+                        act_str = str(compact_payload.get("action") or "")
+                        st = "DEATH" if compact_payload.get("game_over") else "PLAYABLE"
+                        hist_trans = [
+                            {"before_grid": t.before_grid, "action": t.action, "after_grid": t.after_grid, "turn_idx": t.turn_idx}
+                            for t in getattr(self._tycho_workbench, "transitions", [])
+                        ]
+                        diag = self._fault_localizer.classify_surprise(
+                            before_grid=b_grid,
+                            action=act_str,
+                            actual_grid=a_grid,
+                            actual_status=st,
+                            history_transitions=hist_trans,
+                        )
+                        if diag.error_type != "NONE":
+                            self._last_abductive_fault = diag
+                    except Exception:
+                        pass
                 if compact_payload.get("level_completed"):
                     self._avo_supervisor.reset_level()
                     self._tycho_workbench.reset_level()

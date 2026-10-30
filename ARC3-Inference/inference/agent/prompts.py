@@ -260,6 +260,7 @@ IN_REPL_SIMULATION_ADDENDUM = (
     "    - planner.solve_puct(initial_grid, valid_actions, transition_models, goal_fn, masked_strips=None): Belief-Space PUCT planner for competing transition hypotheses.\n"
     "    - macro_options.option_nav(start, target, passable, fatal): Hierarchical macro-nav skill finding shortest safe corridor.\n"
     "    - macro_options.option_contact(start, target_cells, dir, passable, fatal): Hierarchical macro-contact skill positioning avatar for push/interaction.\n"
+    "    - commit_plan(actions, expected_frames=None, expected_outcomes=None): Kepler pre-action commit gate; executes multi-step sequences step-by-step and aborts immediately on unexpected surprise or no-op to prevent wasted budget.\n"
     "    - workbench.retrodict_hypothesis(transition_fn_or_class): complete-history retrodiction grading dynamic recall and coverage with partial abstention (ABSTAIN = -1).\n"
     "    - socse.extract_connected_components(grid): multi-scale 4-connected entity segmentation.\n"
     "    - goal_estimator.evaluate_invariants(initial_grid, current_grid): Core-Knowledge goal progress & terminal invariant estimator.\n"

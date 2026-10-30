@@ -587,6 +587,59 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
                     _stale_state.append(str(_name))
             return action_result
 
+        commit_gate = PurePythonCommitGate()
+
+        def commit_plan(actions, expected_frames=None, expected_outcomes=None):
+            # Executes an action sequence with Pre-Action Commit Verification and Surprise Abort (§10.3 & §16.1).
+            actions_list = list(actions) if isinstance(actions, (list, tuple)) else [actions]
+            commit_gate.commit_plan(actions_list, expected_frames, expected_outcomes)
+            results = []
+            for i, act in enumerate(actions_list):
+                before = runtime_globals.get("current_frame")
+                before_grid = before._grid if before is not None else None
+                act_res = action(act)
+                results.append(act_res)
+                after = runtime_globals.get("current_frame")
+                after_grid = after._grid if after is not None else None
+
+                status = "PLAYABLE"
+                if act_res.get("game_over"):
+                    status = "DEATH"
+                elif act_res.get("level_completed"):
+                    status = "WIN"
+
+                if before_grid is not None and after_grid is not None:
+                    is_surprise, diag = commit_gate.evaluate_step(
+                        before_grid=before_grid,
+                        action=str(act),
+                        actual_grid=after_grid,
+                        step_idx=i,
+                        actual_status=status,
+                    )
+                    if is_surprise and diag:
+                        print(f"[COMMIT GATE ABORT at step {i+1}/{len(actions_list)}]: {diag.get('diagnostic_message')}")
+                        return {
+                            "status": "ABORTED_BY_COMMIT_GATE",
+                            "step": i + 1,
+                            "fault": diag,
+                            "executed_results": results,
+                        }
+                if status in ("DEATH", "WIN"):
+                    return {
+                        "status": status,
+                        "step": i + 1,
+                        "executed_results": results,
+                    }
+            return {
+                "status": "COMPLETED",
+                "step": len(actions_list),
+                "executed_results": results,
+            }
+
+        runtime_globals["commit_gate"] = commit_gate
+        runtime_globals["commit_plan"] = commit_plan
+        runtime_globals["fault_localizer"] = PurePythonFaultLocalizer()
+
         def _animation_fetch(kind):
             _send({"type": "animation", "request": {"kind": kind}})
             reply = _recv()
