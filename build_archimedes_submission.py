@@ -105,6 +105,72 @@ def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
         print(f"[NOTEBOOK] Mitigated SGLang Issue #36537 in Cell 12: Removed --tool-call-parser qwen3_coder from {notebook_path.name}.")
     nb["cells"][12]["source"] = [cell_12_src]
 
+    # Cell 16: Fast-track offline dry-run while keeping 100% full time & full games on real competition rerun
+    cell_16_src = "".join(nb["cells"][16]["source"])
+    old_c16_block = (
+        "else:\n"
+        "    if USE_PRIORITY_SCHEDULING:\n"
+        "        bm.solver.concurrency = (25 - len(demo_excluded_games)) * bm.n_passes\n"
+        "        bm.solver.max_runtime_s_per_game = 532*60 * bm.solver.concurrency // 110\n"
+        "    if float(getattr(target, 'max_runtime_s', 0.0) or 0.0) != 32400.0:\n"
+    )
+    new_c16_block = (
+        "else:\n"
+        "    # FAST-TRACK offline dry-run: 1 pass, 15 min limit to emit submission.parquet quickly\n"
+        "    bm.n_passes = 1\n"
+        "    if USE_PRIORITY_SCHEDULING:\n"
+        "        bm.solver.concurrency = 2\n"
+        "        bm.solver.max_runtime_s_per_game = 15*60\n"
+        "    if float(getattr(target, 'max_runtime_s', 0.0) or 0.0) != 32400.0:\n"
+    )
+    if old_c16_block in cell_16_src:
+        cell_16_src = cell_16_src.replace(old_c16_block, new_c16_block)
+        print(f"[NOTEBOOK] Fast-tracked Cell 16 offline dry-run in {notebook_path.name}.")
+    nb["cells"][16]["source"] = [cell_16_src]
+
+    # Cell 20: Fast-track offline dry-run game selection and soft_end
+    cell_20_src = "".join(nb["cells"][20]["source"])
+    old_c20_block = (
+        "if TRUE_SUBMISSION:\n"
+        "    # Real submission: play the live competition Arcade served by the Kaggle gateway.\n"
+        "    os.environ.setdefault(\"ARC_API_KEY\", \"test-key-123\")\n"
+        "    os.environ.setdefault(\"ARC_BASE_URL\", \"http://gateway:8001/\")\n"
+        "    # The gateway boots asynchronously; wait before swapping in its game list.\n"
+        "    _wait_for_gateway(os.environ[\"ARC_BASE_URL\"])\n"
+        "    bm.games = _competition_games()\n"
+        "else:\n"
+        "    # Interactive run: play the bundled competition environments offline (no gateway).\n"
+        "    # The competition's environment files ship alongside the wheelhouse in the competition dataset.\n"
+        "    competition_env_files = str(Path(\"/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels\").parent / \"environment_files\")\n"
+        "    bm.games = _offline_games(competition_env_files)\n"
+        "\n"
+        "# Outside a real submission, stop ~10 min before the wall-clock budget for a graceful exit.\n"
+        "soft_end = None\n"
+        "if not TRUE_SUBMISSION:\n"
+        "    budget = float(getattr(target, \"max_runtime_s\", 0.0) or 0.0)\n"
+        "    if budget > 0:\n"
+        "        soft_end = datetime.fromtimestamp(NOTEBOOK_START_EPOCH) + timedelta(seconds=budget - min(600.0, budget / 2))"
+    )
+    new_c20_block = (
+        "if TRUE_SUBMISSION:\n"
+        "    # Real submission: play ALL 110 live competition games served by the Kaggle gateway.\n"
+        "    os.environ.setdefault(\"ARC_API_KEY\", \"test-key-123\")\n"
+        "    os.environ.setdefault(\"ARC_BASE_URL\", \"http://gateway:8001/\")\n"
+        "    # The gateway boots asynchronously; wait before swapping in its game list.\n"
+        "    _wait_for_gateway(os.environ[\"ARC_BASE_URL\"])\n"
+        "    bm.games = _competition_games()\n"
+        "    soft_end = None  # Full 9-hour competition runtime budget\n"
+        "else:\n"
+        "    # Fast-track dry run: 1 offline validation game to verify full stack and emit submission.parquet\n"
+        "    competition_env_files = str(Path(\"/kaggle/input/competitions/arc-prize-2026-arc-agi-3/arc_agi_3_wheels\").parent / \"environment_files\")\n"
+        "    bm.games = _offline_games(competition_env_files)[:1]\n"
+        "    soft_end = datetime.fromtimestamp(NOTEBOOK_START_EPOCH) + timedelta(minutes=18)"
+    )
+    if old_c20_block in cell_20_src:
+        cell_20_src = cell_20_src.replace(old_c20_block, new_c20_block)
+        print(f"[NOTEBOOK] Fast-tracked Cell 20 offline dry-run in {notebook_path.name}.")
+    nb["cells"][20]["source"] = [cell_20_src]
+
     with open(notebook_path, "w", encoding="utf-8") as f:
         json.dump(nb, f, indent=1, ensure_ascii=False)
     print(f"[NOTEBOOK] Successfully wrote updated notebook: {notebook_path}")
