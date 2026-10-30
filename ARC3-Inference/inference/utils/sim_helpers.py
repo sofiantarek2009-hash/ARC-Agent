@@ -473,6 +473,40 @@ class PurePythonWorkbench:
         }
 
 
+class PurePythonGoalEstimator:
+    """Core-Knowledge Goal Progress & Terminal Invariant Evaluator."""
+
+    @staticmethod
+    def evaluate_progress(initial_grid, current_grid, target_cells=None):
+        """Calculates normalized progress toward goal invariants (exhaustion & alignment)."""
+        h = len(current_grid)
+        w = len(current_grid[0]) if h > 0 else 0
+        if h == 0 or w == 0:
+            return 0.0
+
+        scores = []
+        init_nonzero = sum(1 for r in range(h) for c in range(w) if initial_grid[r][c] != 0)
+        curr_nonzero = sum(1 for r in range(h) for c in range(w) if current_grid[r][c] != 0)
+        if init_nonzero > 0 and curr_nonzero < init_nonzero:
+            scores.append((init_nonzero - curr_nonzero) / float(init_nonzero))
+
+        if target_cells:
+            # Check min distance to target
+            target_set = set(target_cells)
+            min_dist = float("inf")
+            for r in range(h):
+                for c in range(w):
+                    if current_grid[r][c] != 0 and (r, c) not in target_set:
+                        for tr, tc in target_set:
+                            dist = abs(r - tr) + abs(c - tc)
+                            if dist < min_dist:
+                                min_dist = dist
+            if min_dist != float("inf"):
+                scores.append(1.0 / (1.0 + min_dist))
+
+        return float(sum(scores) / max(1, len(scores))) if scores else 0.0
+
+
 class PurePythonAStarPlanner:
     """Deterministic State-Equivalence A* Shortest-Path Search with HUD Masking."""
 

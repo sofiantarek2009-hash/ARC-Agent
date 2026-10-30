@@ -3604,10 +3604,14 @@ class ToolAgent:
         from inference.utils.avo_and_commit import AVOSupervisor, KeplerCommitGate
         from inference.utils.tycho_workbench import ProgrammaticWorldModelWorkbench
         from inference.utils.socse_perception import SOCSEPerceptionEngine
+        from inference.utils.five_tier_memory import FiveTierMemoryManager
+        from inference.utils.animation_event_compiler import AnimationEventCompiler
         self._avo_supervisor = AVOSupervisor(stagnation_threshold=4)
         self._kepler_gate = KeplerCommitGate()
         self._tycho_workbench = ProgrammaticWorldModelWorkbench()
         self._socse_perception = SOCSEPerceptionEngine()
+        self._five_tier_memory = FiveTierMemoryManager()
+        self._animation_event_compiler = AnimationEventCompiler()
         self._pending_animation_image: dict[str, Any] | None = None
         self._pending_animation_image_label: str = ""
         self._pending_diff_image_label: str = ""
@@ -5165,6 +5169,16 @@ class ToolAgent:
                 "to context eviction."
             )
         lines.extend(self._prepare_auto_diff(current_frame, previous_step_summary))
+        # Compile sub-frame animation events if available
+        if hasattr(self, "_last_animation_chain") and self._last_animation_chain:
+            try:
+                anim_summary = self._animation_event_compiler.compile_animation_timeline(
+                    self._last_animation_chain
+                )
+                if anim_summary.get("summary_text"):
+                    lines.append(f"Sub-frame transient dynamics: {anim_summary['summary_text']}.")
+            except Exception:
+                pass
         state_line = f"Current state: step {current_step}, level {current_level}"
         if observed_max_level > current_level:
             state_line += f" out of observed max level {observed_max_level} so far"
@@ -5191,7 +5205,7 @@ class ToolAgent:
         lines.extend(
             [
                 "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_call_result`, `frame_diff(before, after)`, and `action(actions)`.",
-                "Programmatic Workbench tools: `workbench.retrodict_hypothesis(fn)` (tests your transition function against 100% past turns), `planner.solve(grid, valid_actions, fn, goal_fn)` (A* search with HUD masking), and `socse.get_connected_components(grid)`.",
+                "Programmatic Workbench tools: `workbench.retrodict_hypothesis(fn)` (tests your transition function against 100% past turns), `planner.solve(grid, valid_actions, fn, goal_fn)` (A* search with HUD masking), `goal_estimator.evaluate_progress(initial_grid, current_grid, target_cells)` (Core Knowledge goal induction), and `socse.get_connected_components(grid)`.",
                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
@@ -5995,9 +6009,25 @@ class ToolAgent:
                             game_over=bool(compact_payload.get("game_over")),
                             level_completed=bool(compact_payload.get("level_completed")),
                         )
+                # Five-Tier Memory recording
+                try:
+                    s_hash = hash(str(state_hash))
+                    nxt_hash = hash(str(getattr(self, "_noop_guard_pre_hash", "")))
+                    self._five_tier_memory.record_transition(
+                        turn_idx=int(compact_payload.get("action_num") or 0),
+                        state_hash=s_hash,
+                        action=str(compact_payload.get("action") or ""),
+                        next_state_hash=nxt_hash,
+                        gameplay_changed=bool(compact_payload.get("gameplay_changed")),
+                        is_death=bool(compact_payload.get("game_over")),
+                        is_level_completed=bool(compact_payload.get("level_completed")),
+                    )
+                except Exception:
+                    pass
                 if compact_payload.get("level_completed"):
                     self._avo_supervisor.reset_level()
                     self._tycho_workbench.reset_level()
+                    self._five_tier_memory.advance_level(int(compact_payload.get("level") or 1) + 1)
             next_valid_actions = raw_payload.get("valid_actions")
             if isinstance(next_valid_actions, list):
                 self._current_valid_actions = _normalize_valid_actions(next_valid_actions)

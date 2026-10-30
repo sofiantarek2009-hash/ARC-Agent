@@ -420,6 +420,7 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["socse"] = PurePythonSOCSE
             runtime_globals["workbench"] = PurePythonWorkbench(history)
             runtime_globals["planner"] = PurePythonAStarPlanner
+            runtime_globals["goal_estimator"] = PurePythonGoalEstimator
             runtime_globals["valid_actions"] = [str(item) for item in state_payload.get("valid_actions", [])]
             runtime_globals["death_ledger"] = state_payload.get("death_ledger") or {"attempts": []}
             runtime_globals["last_action_call_result"] = action_result

@@ -92,3 +92,26 @@ def test_pure_python_planner():
     assert plan is not None
     assert len(plan) == 3
     assert plan == ["ACTION4", "ACTION4", "ACTION4"]
+
+
+def test_pure_python_goal_estimator():
+    from inference.utils.sim_helpers import PurePythonGoalEstimator
+
+    init_grid = [
+        [1, 1, 0],
+        [1, 0, 0],
+    ]
+    cur_grid_progress = [
+        [1, 0, 0],
+        [0, 0, 0],
+    ]
+    progress = PurePythonGoalEstimator.evaluate_progress(init_grid, cur_grid_progress)
+    assert progress > 0.5  # 2 of 3 tokens cleared
+
+    target_cells = [(0, 2)]
+    cur_grid_align = [
+        [0, 1, 0],
+        [0, 0, 0],
+    ]
+    progress_align = PurePythonGoalEstimator.evaluate_progress(init_grid, cur_grid_align, target_cells=target_cells)
+    assert progress_align > 0.0
