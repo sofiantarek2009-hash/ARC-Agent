@@ -46,6 +46,10 @@ from inference.agent.tool_agent import (
     ToolAgent,
     _priority_gate,
 )
+from inference.utils.portfolio_voc_scheduler import (
+    PortfolioVoCScheduler,
+    GameStreamState,
+)
 from inference.framework.kaggle import (
     DEFAULT_QWEN_MODEL_DATASET_SOURCE,
     DEFAULT_SERVED_MODEL_NAME,
@@ -1529,10 +1533,37 @@ class HarnessSolver(Solver):
 
     async def _run_games(self, games: list[taaf.game.Game]) -> None:
         self._stop_event.clear()
-        semaphore = asyncio.Semaphore(max(1, int(self.concurrency)))
+        concurrency_limit = max(1, int(self.concurrency))
+        semaphore = asyncio.Semaphore(concurrency_limit)
         pass_indices_by_game_id: dict[str, int] = {}
         loop = asyncio.get_running_loop()
         pool = self._worker_pool
+
+        # Initialize Portfolio Value-of-Computation (VoC) Scheduler
+        voc_scheduler = PortfolioVoCScheduler(
+            max_active_streams=concurrency_limit,
+            tau_fade=float(os.environ.get("ARC3_VOC_TAU_FADE", 30000.0)),
+            cache_hysteresis_bonus=float(os.environ.get("ARC3_VOC_HYSTERESIS", 50.0)),
+        )
+
+        # Build initial GameStreamState items
+        stream_states: list[tuple[int, GameStreamState]] = []
+        for index, game in enumerate(games):
+            g_id = game.game_run.game_id if game.game_run is not None else str(index)
+            state = GameStreamState(
+                game_id=g_id,
+                current_level=1,
+                total_levels=5,
+                actions_expended=0,
+                human_baseline=20,
+                tokens_since_progress=0,
+                world_model_recall=0.5,
+                is_resident=False,
+            )
+            stream_states.append((index, state))
+
+        # Sort games by initial VoC priority
+        stream_states.sort(key=lambda item: voc_scheduler.compute_game_priority(item[1]), reverse=True)
 
         async def run_one(index: int, pass_index: int, game: taaf.game.Game) -> None:
             async with semaphore:
@@ -1544,7 +1575,8 @@ class HarnessSolver(Solver):
                     await asyncio.to_thread(self._play_one, *args)
 
         tasks: list[asyncio.Task[None]] = []
-        for index, game in enumerate(games):
+        for index, _ in stream_states:
+            game = games[index]
             game_id = game.game_run.game_id if game.game_run is not None else str(index)
             pass_index = pass_indices_by_game_id.get(game_id, 0)
             pass_indices_by_game_id[game_id] = pass_index + 1
