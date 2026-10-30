@@ -507,6 +507,28 @@ class PurePythonGoalEstimator:
         return float(sum(scores) / max(1, len(scores))) if scores else 0.0
 
 
+class PurePythonBOEDProber:
+    """Speed-Depth Bayesian Optimal Experiment Design Acquisition in Sandbox."""
+
+    @staticmethod
+    def get_phase(turn_idx, dynamic_recall, expended_actions=0, human_baseline=20):
+        if turn_idx <= 3 or dynamic_recall < 0.30:
+            return "PHASE_I_COLD_START"
+        if expended_actions >= int(3.5 * human_baseline):
+            return "PHASE_IV_BUDGET_CRITICAL"
+        if dynamic_recall >= 0.90:
+            return "PHASE_III_EXPLOITATION_SHORTEST_PATH"
+        return "PHASE_II_TARGETED_DISAMBIGUATION"
+
+    @staticmethod
+    def score_probe(action, is_untested=False, is_known_noop=False, is_known_deadly=False):
+        if is_known_deadly:
+            return -1000.0
+        if is_known_noop:
+            return -500.0
+        return 10.0 if is_untested else 1.0
+
+
 class PurePythonAStarPlanner:
     """Deterministic State-Equivalence A* Shortest-Path Search with HUD Masking."""
 

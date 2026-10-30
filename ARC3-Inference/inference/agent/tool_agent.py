@@ -3606,12 +3606,14 @@ class ToolAgent:
         from inference.utils.socse_perception import SOCSEPerceptionEngine
         from inference.utils.five_tier_memory import FiveTierMemoryManager
         from inference.utils.animation_event_compiler import AnimationEventCompiler
+        from inference.utils.boed_acquisition import SpeedDepthBOEDAcquisition
         self._avo_supervisor = AVOSupervisor(stagnation_threshold=4)
         self._kepler_gate = KeplerCommitGate()
         self._tycho_workbench = ProgrammaticWorldModelWorkbench()
         self._socse_perception = SOCSEPerceptionEngine()
         self._five_tier_memory = FiveTierMemoryManager()
         self._animation_event_compiler = AnimationEventCompiler()
+        self._boed_prober = SpeedDepthBOEDAcquisition()
         self._pending_animation_image: dict[str, Any] | None = None
         self._pending_animation_image_label: str = ""
         self._pending_diff_image_label: str = ""
@@ -5205,7 +5207,7 @@ class ToolAgent:
         lines.extend(
             [
                 "Only tool: `python`. It receives `current_frame`, `previous_frame`, `history`, `transitions`, `last_transition`, `valid_actions`, `last_action_call_result`, `frame_diff(before, after)`, and `action(actions)`.",
-                "Programmatic Workbench tools: `workbench.retrodict_hypothesis(fn)` (tests your transition function against 100% past turns), `planner.solve(grid, valid_actions, fn, goal_fn)` (A* search with HUD masking), `goal_estimator.evaluate_progress(initial_grid, current_grid, target_cells)` (Core Knowledge goal induction), and `socse.get_connected_components(grid)`.",
+                "Programmatic Workbench tools: `workbench.retrodict_hypothesis(fn)` (tests your transition function against 100% past turns), `planner.solve(grid, valid_actions, fn, goal_fn)` (A* search with HUD masking), `goal_estimator.evaluate_progress(initial_grid, current_grid, target_cells)` (Core Knowledge goal induction), `boed_prober.score_probe(action)` (Speed-Depth BOED acquisition), and `socse.get_connected_components(grid)`.",
                 "Only letter-coded board views and lightweight metadata are exposed; raw numeric color IDs are not available.",
                 "Keep tool output compact: use `current_frame.segmentation` as the primary view, and `current_frame.ascii` only for a small specific region; never print full boards.",
                 "For the most recent change, compare `previous_frame` to `current_frame`, or `last_transition.before_frame` to `last_transition.after_frame`; `history[-1].frame` is the current frame, not the previous one.",
@@ -5251,6 +5253,25 @@ class ToolAgent:
         directive = self._avo_supervisor.get_supervisory_directive()
         if directive:
             lines.append(directive)
+
+        # AERA Speed-Depth BOED Epistemic Guidance
+        try:
+            hist_len = len(history_entries) if history_entries else 0
+            epistemic_phase = self._boed_prober.get_epistemic_phase(
+                turn_idx=hist_len,
+                dynamic_recall=getattr(self._tycho_workbench, "latest_dynamic_recall", 0.5),
+                expended_actions=action_num,
+            )
+            if epistemic_phase == "PHASE_I_COLD_START":
+                lines.append(
+                    "[SPEED-DEPTH BOED: PHASE I COLD START] Probing active. Execute single-action probes to identify controllable entity and basic action semantics. Avoid batching unverified actions."
+                )
+            elif epistemic_phase == "PHASE_IV_BUDGET_CRITICAL":
+                lines.append(
+                    "[SPEED-DEPTH BOED: PHASE IV BUDGET CRITICAL] Action budget warning. Suppress exploratory probing and execute direct shortest-path solutions to clear level."
+                )
+        except Exception:
+            pass
 
         if action_num == 0:
             lines.append(
