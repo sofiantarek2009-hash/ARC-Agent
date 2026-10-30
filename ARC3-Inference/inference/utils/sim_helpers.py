@@ -530,6 +530,69 @@ class PurePythonBOEDProber:
         return 10.0 if is_untested else 1.0
 
 
+class PurePythonMacroOptions:
+    """In-Sandbox Two-Level Hierarchical Macro-Options (§10.2, §22.1 Mechanism 22)."""
+
+    @staticmethod
+    def option_nav(start_pos, target_pos, passable_cells, fatal_cells=None, grid_shape=(64, 64)):
+        if start_pos == target_pos:
+            return []
+        h, w = grid_shape
+        fatal = set(fatal_cells) if fatal_cells else set()
+        safe_passable = set(passable_cells) - fatal
+        safe_passable.add(target_pos)
+
+        deltas = {
+            "ACTION1": (-1, 0),
+            "ACTION2": (1, 0),
+            "ACTION3": (0, -1),
+            "ACTION4": (0, 1),
+        }
+        q = deque([(start_pos, [])])
+        visited = {start_pos}
+
+        while q:
+            curr, path = q.popleft()
+            if curr == target_pos:
+                return path
+            r, c = curr
+            for act, (dr, dc) in deltas.items():
+                nr, nc = r + dr, c + dc
+                nxt = (nr, nc)
+                if 0 <= nr < h and 0 <= nc < w:
+                    if nxt not in visited and (nxt in safe_passable or nxt == target_pos):
+                        visited.add(nxt)
+                        q.append((nxt, path + [act]))
+        return []
+
+    @staticmethod
+    def option_contact(start_pos, target_obj_cells, approach_dir, passable_cells, fatal_cells=None, grid_shape=(64, 64)):
+        dir_offsets = {
+            "UP": (1, 0, "ACTION1"),
+            "DOWN": (-1, 0, "ACTION2"),
+            "LEFT": (0, 1, "ACTION3"),
+            "RIGHT": (0, -1, "ACTION4"),
+        }
+        if approach_dir not in dir_offsets:
+            return []
+        dr, dc, final_act = dir_offsets[approach_dir]
+        valid_stand_positions = set()
+        for tr, tc in target_obj_cells:
+            sr, sc = tr + dr, tc + dc
+            if 0 <= sr < grid_shape[0] and 0 <= sc < grid_shape[1]:
+                if (sr, sc) in passable_cells:
+                    valid_stand_positions.add((sr, sc))
+        if not valid_stand_positions:
+            return []
+
+        best_path = None
+        for stand_pos in valid_stand_positions:
+            p = PurePythonMacroOptions.option_nav(start_pos, stand_pos, passable_cells, fatal_cells, grid_shape)
+            if p is not None and (best_path is None or len(p) < len(best_path)):
+                best_path = p + [final_act]
+        return best_path or []
+
+
 class PurePythonAStarPlanner:
     """Deterministic State-Equivalence A* & Belief-Space PUCT Planner with HUD Masking (§10.2)."""
 

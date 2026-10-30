@@ -50,6 +50,7 @@ from inference.utils.portfolio_voc_scheduler import (
     PortfolioVoCScheduler,
     GameStreamState,
 )
+from inference.utils.serving_watchdog import ConcurrencyHeadroomGovernor
 from inference.framework.kaggle import (
     DEFAULT_QWEN_MODEL_DATASET_SOURCE,
     DEFAULT_SERVED_MODEL_NAME,
@@ -1533,7 +1534,12 @@ class HarnessSolver(Solver):
 
     async def _run_games(self, games: list[taaf.game.Game]) -> None:
         self._stop_event.clear()
-        concurrency_limit = max(1, int(self.concurrency))
+        # Concurrency Headroom Governor (§14.2): Cap concurrent streams to maintain headroom
+        raw_concurrency = max(1, int(self.concurrency))
+        concurrency_limit = ConcurrencyHeadroomGovernor.compute_safe_concurrency(
+            raw_concurrency,
+            max_running_requests=int(os.environ.get("ARC3_MAX_RUNNING_REQUESTS", 8)),
+        )
         semaphore = asyncio.Semaphore(concurrency_limit)
         pass_indices_by_game_id: dict[str, int] = {}
         loop = asyncio.get_running_loop()

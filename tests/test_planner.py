@@ -110,3 +110,44 @@ class TestPlanner(unittest.TestCase):
         assert pure_plan is not None
         assert len(pure_plan) >= 2
 
+    def test_hierarchical_macro_options(self) -> None:
+        from inference.utils.symbolic_planner import HierarchicalMacroOptions
+        from inference.utils.sim_helpers import PurePythonMacroOptions
+
+        passable = {(r, c) for r in range(5) for c in range(5)}
+        fatal = {(1, 0), (1, 1)}
+
+        # Test option_nav avoiding fatal cells
+        nav_path = HierarchicalMacroOptions.option_nav(
+            start_pos=(0, 0),
+            target_pos=(2, 0),
+            passable_cells=passable,
+            fatal_cells=fatal,
+            grid_shape=(5, 5),
+        )
+        assert nav_path is not None
+        assert len(nav_path) >= 2
+
+        pure_nav = PurePythonMacroOptions.option_nav(
+            start_pos=(0, 0),
+            target_pos=(2, 0),
+            passable_cells=passable,
+            fatal_cells=fatal,
+            grid_shape=(5, 5),
+        )
+        assert pure_nav is not None
+        assert len(pure_nav) >= 2
+
+        # Test option_contact
+        contact_path = HierarchicalMacroOptions.option_contact(
+            start_pos=(0, 0),
+            target_obj_cells={(2, 2)},
+            approach_dir="LEFT",  # stand to right at (2, 3), push LEFT
+            passable_cells=passable,
+            grid_shape=(5, 5),
+        )
+        assert contact_path is not None
+        assert len(contact_path) >= 2
+        assert contact_path[-1] == "ACTION3"
+
+

@@ -12,6 +12,108 @@ import time
 from typing import Any, Callable
 
 
+class HierarchicalMacroOptions:
+    """Two-Level Hierarchical Macro-Options Generator (§10.2, §22.1 Mechanism 22).
+    
+    Synthesizes candidate macro-options:
+    - omega_nav(ctrl, target): navigates controllable entity to target coordinate avoiding fatal states
+    - omega_contact(ctrl, obj, dir): brings ctrl into orthogonal contact with obj from direction
+    - omega_displace(obj, dest): pushes/pulls movable entity to dest
+    - omega_click(obj): emits ACTION6(r, c) on centroid of obj
+    """
+
+    @staticmethod
+    def option_nav(
+        start_pos: tuple[int, int],
+        target_pos: tuple[int, int],
+        passable_cells: set[tuple[int, int]],
+        fatal_cells: set[tuple[int, int]] | None = None,
+        grid_shape: tuple[int, int] = (64, 64),
+    ) -> list[str]:
+        """Synthesizes omega_nav to navigate avatar to target_pos avoiding hazards."""
+        from collections import deque
+        if start_pos == target_pos:
+            return []
+
+        h, w = grid_shape
+        fatal = set(fatal_cells) if fatal_cells else set()
+        safe_passable = set(passable_cells) - fatal
+        safe_passable.add(target_pos)
+
+        deltas = {
+            "ACTION1": (-1, 0),
+            "ACTION2": (1, 0),
+            "ACTION3": (0, -1),
+            "ACTION4": (0, 1),
+        }
+
+        q = deque([(start_pos, [])])
+        visited = {start_pos}
+
+        while q:
+            curr, path = q.popleft()
+            if curr == target_pos:
+                return path
+
+            r, c = curr
+            for act, (dr, dc) in deltas.items():
+                nr, nc = r + dr, c + dc
+                nxt = (nr, nc)
+                if 0 <= nr < h and 0 <= nc < w:
+                    if nxt not in visited and (nxt in safe_passable or nxt == target_pos):
+                        visited.add(nxt)
+                        q.append((nxt, path + [act]))
+
+        return []
+
+    @staticmethod
+    def option_contact(
+        start_pos: tuple[int, int],
+        target_obj_cells: set[tuple[int, int]],
+        approach_dir: str,  # "UP", "DOWN", "LEFT", "RIGHT"
+        passable_cells: set[tuple[int, int]],
+        fatal_cells: set[tuple[int, int]] | None = None,
+        grid_shape: tuple[int, int] = (64, 64),
+    ) -> list[str]:
+        """Synthesizes omega_contact to position avatar adjacent to target_obj from approach_dir."""
+        dir_offsets = {
+            "UP": (1, 0, "ACTION1"),     # Stand below, push UP
+            "DOWN": (-1, 0, "ACTION2"),  # Stand above, push DOWN
+            "LEFT": (0, 1, "ACTION3"),   # Stand to right, push LEFT
+            "RIGHT": (0, -1, "ACTION4"), # Stand to left, push RIGHT
+        }
+        if approach_dir not in dir_offsets:
+            return []
+
+        dr, dc, final_act = dir_offsets[approach_dir]
+        valid_stand_positions = set()
+        for tr, tc in target_obj_cells:
+            sr, sc = tr + dr, tc + dc
+            if 0 <= sr < grid_shape[0] and 0 <= sc < grid_shape[1]:
+                if (sr, sc) in passable_cells:
+                    valid_stand_positions.add((sr, sc))
+
+        if not valid_stand_positions:
+            return []
+
+        # Find shortest path to any valid stand position
+        best_path: list[str] | None = None
+        for stand_pos in valid_stand_positions:
+            p = HierarchicalMacroOptions.option_nav(
+                start_pos, stand_pos, passable_cells, fatal_cells, grid_shape
+            )
+            if p is not None and (best_path is None or len(p) < len(best_path)):
+                best_path = p + [final_act]
+
+        return best_path or []
+
+    @staticmethod
+    def option_click(centroid_pos: tuple[int, int]) -> str:
+        """Synthesizes omega_click(obj) emitting ACTION6(r, c)."""
+        r, c = centroid_pos
+        return f"ACTION6_{r}_{c}"
+
+
 class StateEquivalenceAStarPlanner:
     """Deterministic Shortest-Path Planner over Python Transition Models.
     
