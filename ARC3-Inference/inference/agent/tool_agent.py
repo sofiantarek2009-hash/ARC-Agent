@@ -6035,32 +6035,38 @@ class ToolAgent:
 
             # Observe for NVIDIA AVO Supervised Stagnation & Tycho tape
             if compact_payload.get("executed"):
-                state_hash = getattr(self, "_noop_guard_pre_hash", "") or ""
+                # Lossless runtime state load
+                refreshed_frame, refreshed_history = load_runtime_state(state_path)
+                after_entry = refreshed_history[-1] if refreshed_history else None
+                before_entry = refreshed_history[-2] if len(refreshed_history) >= 2 else None
+                after_grid = after_entry.frame.grid if (after_entry and after_entry.frame) else None
+                before_grid = before_entry.frame.grid if (before_entry and before_entry.frame) else None
+
+                # Compute true interior state hashes directly from actual frames
+                cur_state_hash = _interior_state_hash(after_grid) if after_grid else (getattr(self, "_noop_guard_pre_hash", "") or "")
+                pre_state_hash = _interior_state_hash(before_grid) if before_grid else cur_state_hash
+
                 self._avo_supervisor.observe_turn(
-                    state_hash,
+                    cur_state_hash,
                     compact_payload.get("gameplay_changed"),
                     int(compact_payload.get("level") or 1),
                 )
                 # Lossless Tycho transition tape recording
-                refreshed_frame, refreshed_history = load_runtime_state(state_path)
-                if len(refreshed_history) >= 2:
-                    before_entry = refreshed_history[-2]
-                    after_entry = refreshed_history[-1]
-                    if before_entry.frame is not None and after_entry.frame is not None:
-                        self._tycho_workbench.record_transition(
-                            turn_idx=int(compact_payload.get("action_num") or len(refreshed_history)),
-                            before_grid=before_entry.frame.grid,
-                            action=str(compact_payload.get("action") or ""),
-                            action_data={},
-                            after_grid=after_entry.frame.grid,
-                            gameplay_changed=bool(compact_payload.get("gameplay_changed")),
-                            game_over=bool(compact_payload.get("game_over")),
-                            level_completed=bool(compact_payload.get("level_completed")),
-                        )
+                if before_grid is not None and after_grid is not None:
+                    self._tycho_workbench.record_transition(
+                        turn_idx=int(compact_payload.get("action_num") or len(refreshed_history)),
+                        before_grid=before_grid,
+                        action=str(compact_payload.get("action") or ""),
+                        action_data={},
+                        after_grid=after_grid,
+                        gameplay_changed=bool(compact_payload.get("gameplay_changed")),
+                        game_over=bool(compact_payload.get("game_over")),
+                        level_completed=bool(compact_payload.get("level_completed")),
+                    )
                 # Five-Tier Memory recording
                 try:
-                    s_hash = hash(str(state_hash))
-                    nxt_hash = hash(str(getattr(self, "_noop_guard_pre_hash", "")))
+                    s_hash = hash(str(pre_state_hash))
+                    nxt_hash = hash(str(cur_state_hash))
                     self._five_tier_memory.record_transition(
                         turn_idx=int(compact_payload.get("action_num") or 0),
                         state_hash=s_hash,

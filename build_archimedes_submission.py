@@ -15,7 +15,10 @@ from pathlib import Path
 import tarfile
 
 ROOT = Path(__file__).resolve().parent
-NOTEBOOK_PATH = ROOT / "runs" / "dfranzen_exact_submission" / "arc-agi-3-milestone-2-solution.ipynb"
+NOTEBOOK_PATHS = [
+    ROOT / "runs" / "dfranzen_exact_submission" / "arc-agi-3-milestone-2-solution.ipynb",
+    ROOT / "runs" / "blitz" / "arc-agi-3-v3-blitz-70.ipynb",
+]
 
 
 def package_arc3_inference() -> str:
@@ -38,9 +41,9 @@ def package_arc3_inference() -> str:
     return b64_str
 
 
-def update_notebook(b64_bundle: str) -> None:
+def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
     """Updates the notebook cells to deploy Archimedes-3."""
-    with open(NOTEBOOK_PATH, "r", encoding="utf-8") as f:
+    with open(notebook_path, "r", encoding="utf-8") as f:
         nb = json.load(f)
 
     # Cell 2: Write out the Archimedes-3 bundle
@@ -50,7 +53,7 @@ def update_notebook(b64_bundle: str) -> None:
         + '\n'
     )
     nb["cells"][2]["source"] = [cell_2_code]
-    print("[NOTEBOOK] Updated Cell 2 with self-contained Archimedes-3 codebase bundle.")
+    print(f"[NOTEBOOK] Updated Cell 2 in {notebook_path.name} with self-contained Archimedes-3 bundle.")
 
     # Cell 4: Extract the bundle over BUNDLE_DIR/src/ARC3-Inference and adjust concurrency
     cell_4_src = "".join(nb["cells"][4]["source"])
@@ -72,7 +75,6 @@ def update_notebook(b64_bundle: str) -> None:
     if old_patch_call in cell_4_src:
         cell_4_src = cell_4_src.replace(old_patch_call, new_extract_call)
     elif "archimedes3_bundle.tar.gz.b64" not in cell_4_src:
-        # Fallback replacement if whitespace differs
         import re
         cell_4_src = re.sub(
             r'subprocess\.run\(\["git",\s*"apply"[^)]+\)\s*\n\s*print\([^\)]+\)',
@@ -80,13 +82,19 @@ def update_notebook(b64_bundle: str) -> None:
             cell_4_src,
         )
 
+    # Remove any old _UPGRADE_PAYLOAD in Cell 4
+    if "_UPGRADE_PAYLOAD" in cell_4_src:
+        import re
+        cell_4_src = re.sub(r'# --- INJECT FRONTIER 70% UPGRADES INTO BUNDLE ---.*?(?=TRUE_SUBMISSION =)', '', cell_4_src, flags=re.DOTALL)
+        print(f"[NOTEBOOK] Stripped legacy _UPGRADE_PAYLOAD from {notebook_path.name}.")
+
     # Concurrency Headroom Governor (§14.2): Cap ARC3_MAX_ACTIVE_STREAMS at 6 to prevent MTP wedging
     if "'ARC3_MAX_ACTIVE_STREAMS': 10" in cell_4_src:
         cell_4_src = cell_4_src.replace("'ARC3_MAX_ACTIVE_STREAMS': 10", "'ARC3_MAX_ACTIVE_STREAMS': 6")
-        print("[NOTEBOOK] Concurrency Headroom Governor: Adjusted ARC3_MAX_ACTIVE_STREAMS to 6 (§14.2).")
+        print(f"[NOTEBOOK] Concurrency Headroom Governor: Adjusted ARC3_MAX_ACTIVE_STREAMS to 6 in {notebook_path.name} (§14.2).")
 
     nb["cells"][4]["source"] = [cell_4_src]
-    print("[NOTEBOOK] Updated Cell 4 with Archimedes-3 extractor.")
+    print(f"[NOTEBOOK] Updated Cell 4 in {notebook_path.name} with Archimedes-3 extractor.")
 
     # Cell 12: Remove --tool-call-parser qwen3_coder (Mitigating SGLang Issue #36537 token-0 loop)
     cell_12_src = "".join(nb["cells"][12]["source"])
@@ -94,12 +102,12 @@ def update_notebook(b64_bundle: str) -> None:
     new_parser_arg = '"--reasoning-parser", "qwen3",'
     if old_parser_arg in cell_12_src:
         cell_12_src = cell_12_src.replace(old_parser_arg, new_parser_arg)
-        print("[NOTEBOOK] Mitigated SGLang Issue #36537 in Cell 12: Removed --tool-call-parser qwen3_coder.")
+        print(f"[NOTEBOOK] Mitigated SGLang Issue #36537 in Cell 12: Removed --tool-call-parser qwen3_coder from {notebook_path.name}.")
     nb["cells"][12]["source"] = [cell_12_src]
 
-    with open(NOTEBOOK_PATH, "w", encoding="utf-8") as f:
+    with open(notebook_path, "w", encoding="utf-8") as f:
         json.dump(nb, f, indent=1, ensure_ascii=False)
-    print(f"[NOTEBOOK] Successfully wrote updated notebook: {NOTEBOOK_PATH}")
+    print(f"[NOTEBOOK] Successfully wrote updated notebook: {notebook_path}")
 
 
 def main() -> None:
@@ -107,7 +115,9 @@ def main() -> None:
     print(" 🚀 ARCHIMEDES-3 KAGGLE DEPLOYMENT BUNDLER")
     print("=" * 70)
     b64 = package_arc3_inference()
-    update_notebook(b64)
+    for np in NOTEBOOK_PATHS:
+        if np.exists():
+            update_notebook(b64, np)
     print("=" * 70)
     print("✅ Build complete. Ready to push directly to Kaggle via kaggle CLI!")
     print("=" * 70)
