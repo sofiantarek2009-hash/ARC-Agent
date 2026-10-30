@@ -174,7 +174,7 @@ def _guards_active(level: Any) -> bool:
 
 
 BATCH_NOOP_BLOCK = os.environ.get(
-    "ARC3_BATCH_NOOP_BLOCK", "0"
+    "ARC3_BATCH_NOOP_BLOCK", "1"
 ).strip().lower() in ("1", "true", "yes", "on")
 
 
@@ -548,16 +548,9 @@ class _HarnessGameSession:
         soft_remaining = self.solver.soft_time_remaining_seconds()
         if soft_remaining is not None:
             candidates.append(soft_remaining)
-            
-        # Context-Proportional Adaptive Floor:
-        # Base 35s floor + 12s per 10k tokens generated/prefilled in prompt to absorb dense hardware spikes
-        tokens_spent = max(0, _analyzer_reported_tokens(self.analyzer) - self.game_token_baseline)
-        adaptive_floor = 35.0 + ((tokens_spent / 10000.0) * 12.0)
-        adaptive_floor = min(180.0, max(35.0, adaptive_floor))
-        
         if not candidates:
-            return adaptive_floor
-        return max(adaptive_floor, min(candidates))
+            return None
+        return max(0.1, min(candidates))
 
     def token_limit_reached(self) -> bool:
         """Whether this game has generated its allowance.
@@ -600,6 +593,13 @@ class _HarnessGameSession:
             return True
         if self.token_limit_reached():
             return True
+        # Early Surrender: If on Level 0 and > 60 actions with 0 progress, cut loss to preserve global time
+        try:
+            lvl = int(_level_number(self.game))
+            if lvl == 0 and self.action_count >= 60 and float(getattr(self.game.current_state, 'score', 0) or 0) == 0:
+                return True
+        except Exception:
+            pass
         return False
 
     def _queue_position(self) -> int:

@@ -70,7 +70,6 @@ from inference.agent.vision_context import (
 
 from inference.agent.python_tool_sandbox import run_sandboxed_python
 from inference.agent.runtime_state import Frame, HistoryEntry, RUNTIME_STATE_FILENAME, load_runtime_state
-from inference.utils.sim_helpers import System1ReflexiveRouter, solve_pushable_crates
 from inference.utils.openai_compat import (
     assemble_streamed_chat_response,
     build_chat_payload,
@@ -251,7 +250,7 @@ def _get_env_float(name: str, default: float) -> float:
 
 
 _LOCAL_ANALYZER_MAX_OUTPUT = _get_env_int("LOCAL_ANALYZER_MAX_OUTPUT", 0)
-_LOCAL_ANALYZER_CONTEXT_WINDOW = _get_env_int("LOCAL_ANALYZER_CONTEXT_WINDOW", 32768)
+_LOCAL_ANALYZER_CONTEXT_WINDOW = _get_env_int("LOCAL_ANALYZER_CONTEXT_WINDOW", 12288)
 _LOCAL_ANALYZER_TIMEOUT = _get_env_float("LOCAL_ANALYZER_TIMEOUT", 0.0)
 _LOCAL_ANALYZER_TOOL_STEPS = _get_env_int("LOCAL_ANALYZER_TOOL_STEPS", 12)
 _LOCAL_ANALYZER_TOOL_TIMEOUT = _get_env_int("LOCAL_ANALYZER_TOOL_TIMEOUT", 30)
@@ -288,7 +287,7 @@ def _context_drain_floor_mode() -> bool:
     the prefix-cache hit rate. Off by default for that reason; the same average
     depth is available by raising the budget, which does not touch trim
     frequency."""
-    return _get_env_bool("ARC3_CONTEXT_DRAIN_FLOOR", False)
+    return _get_env_bool("ARC3_CONTEXT_DRAIN_FLOOR", True)
 
 
 def _context_drain_tokens() -> int:
@@ -311,7 +310,7 @@ def _context_drain_tokens() -> int:
     Size it against tokens per turn: at ~4-5k per turn including the opener,
     8-12k buys two or three clean turns between evictions. 0 (default) keeps
     the original drop-until-it-fits behavior."""
-    return max(0, _get_env_int("ARC3_CONTEXT_DRAIN_TOKENS", 0))
+    return max(0, _get_env_int("ARC3_CONTEXT_DRAIN_TOKENS", 4096))
 
 
 def _history_turn_drain() -> int:
@@ -325,7 +324,7 @@ def _history_turn_drain() -> int:
 
     Set this and the cap triggers at N but drains to N - drain, so evictions
     become periodic instead of continuous."""
-    return max(0, _get_env_int("ARC3_HISTORY_TURN_DRAIN", 0))
+    return max(0, _get_env_int("ARC3_HISTORY_TURN_DRAIN", 10))
 
 
 def _history_drain_coalesce() -> bool:
@@ -337,7 +336,7 @@ def _history_drain_coalesce() -> bool:
     Dropping turns in that same commit is therefore free, whereas letting the
     cap fire on its own a turn later costs a second invalidation. This makes
     the two mechanisms evict together rather than alternately."""
-    return _get_env_bool("ARC3_HISTORY_DRAIN_COALESCE", False)
+    return _get_env_bool("ARC3_HISTORY_DRAIN_COALESCE", True)
 
 
 def _persistent_history_assistant_turns() -> int:
@@ -3598,10 +3597,6 @@ class ToolAgent:
         self._priority_next = self._priority_current
         self._kept_functions: dict[str, str] = {}
         self._last_animation_chain: list[Any] = []
-        self._system1_router = System1ReflexiveRouter()
-        from inference.utils.sim_helpers import PersistentGameMemory
-        self._persistent_game_memory = PersistentGameMemory()
-        self._system1_interceptions = 0
         self._last_action_gameplay_changed: bool | None = None
         self._pending_animation_image: dict[str, Any] | None = None
         self._pending_animation_image_label: str = ""
@@ -4930,12 +4925,7 @@ class ToolAgent:
                 else:
                     self._consecutive_noops += 1
                 
-                # Dynamic Progress-Aware Stagnation Ceiling:
-                # Level 0/1: strict 2-turn stagnation alert to prevent tutorial time-sinks.
-                # Level 2+: scale ceiling to 4-5 turns to grant deep exploration time for complex multi-room puzzles.
-                stagnation_threshold = 2 if current_level <= 1 else min(5, 2 + current_level)
-                
-                if self._consecutive_noops >= stagnation_threshold:
+                if self._consecutive_noops >= 2:
                     lines.append(
                         f"[AVO SUPERVISOR - STAGNATION DETECTED]: Your last {self._consecutive_noops} action sequences "
                         "produced NO gameplay change in the interior board. The previous trajectory is blocked or ineffective. "
@@ -6673,50 +6663,6 @@ class ToolAgent:
         analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
         prompt_log = _resolve_prompt_log_path(state_path)
         current_frame, history_entries = load_runtime_state(state_path)
-        # MANDATORY SYSTEM 1 HARNESS INTERCEPTOR:
-        # Pre-scan the current board and history using deterministic BFS/A* and domain solvers.
-        # If an unobstructed, deterministic trajectory to an uncollected goal/exit exists,
-        # execute it directly in the environment WITHOUT invoking the LLM.
-        # This completely eliminates LLM text-guessing loops, maximizes RHAE, and preserves VRAM.
-        if self._step_env_callback is not None and current_frame is not None:
-            # Auto-hydrate known avatar/goal colors from persistent memory if present
-            known_avatar = getattr(getattr(self, "_persistent_game_memory", None), "avatar_color", None)
-            known_goal = None
-            goal_set = getattr(getattr(self, "_persistent_game_memory", None), "goal_colors", None)
-            if goal_set and len(goal_set) == 1:
-                known_goal = next(iter(goal_set))
-
-            reflexive_plan = self._system1_router.try_reflexive_route(
-                current_frame,
-                self._current_valid_actions,
-                history_entries=history_entries,
-                known_avatar_color=known_avatar,
-                known_goal_color=known_goal,
-            )
-            if reflexive_plan:
-                action_name_map = {1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT"}
-                step_batch = [{"action": action_name_map.get(act, "UP")} for act in reflexive_plan]
-                try:
-                    intercept_result = self._step_env_callback({"actions": step_batch})
-                    if isinstance(intercept_result, dict) and intercept_result.get("executed"):
-                        self._system1_interceptions += 1
-                        self._last_step_summary = self._summarize_step_sequence([intercept_result])
-                        self._last_action_call_result = dict(intercept_result)
-                        self._update_summarized_knowledge_from_step_summary()
-                        with open(analyzer_log, "a", encoding="utf-8") as f:
-                            f.write(
-                                f"\n[SYSTEM 1 DIRECT INTERCEPTOR]: Executed {len(reflexive_plan)} reflexive steps "
-                                f"({reflexive_plan}) directly in 0.2ms. Bypassed LLM inference.\n"
-                            )
-                        solver_obj = getattr(self._step_env_callback, "__self__", None)
-                        if solver_obj is not None and hasattr(solver_obj, "action_guard_hook"):
-                            solver_obj.action_guard_hook = None
-                        self._step_env_callback = None
-                        self._current_valid_actions = []
-                        return AnalyzerTurnResult(step_executed=True, reasoning="System 1 direct reflexive bypass")
-                except Exception as exc:
-                    log.warning("System 1 direct interceptor encountered error, falling back to LLM: %s", exc)
-
         user_prompt = self._build_user_prompt(
             action_num,
             valid_actions=valid_actions,

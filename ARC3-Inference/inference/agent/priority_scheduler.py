@@ -100,14 +100,7 @@ def priority_value(
     actions, tokens = max(0, state.actions), max(0.0, state.tokens)
     pace = min(2.0, max(0.5, state.cost_multiplier))
     efficiency = (human_actions / (human_actions + actions)) ** 2
-    # Frontier AVO Boost: Games that reach Level >= 2 have cleared the tutorial and proven
-    # high solve potential. Scale up their priority so advancing games get dedicated GPU time
-    # to reach Level 7 and collect the 1.15x RHAE win multiplier.
-    level_multiplier = 1.0
-    if level >= 2:
-        level_multiplier = 1.5 + (0.5 * (level - 2)) # Level 2: 1.5x, Level 3: 2.0x, Level 4: 2.5x, Level 6: 3.5x
-
-    current_value = (level * efficiency) * level_multiplier
+    current_value = level * efficiency
     if normalize_score:
         # Normalize immediate reward A to a ten-level reference (sum 1..10).
         # B is a separately chosen continuation value, not normalized reward.

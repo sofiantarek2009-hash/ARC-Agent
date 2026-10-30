@@ -411,29 +411,9 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["last_action"] = last_transition.action if last_transition is not None else None
             runtime_globals["frame_diff"] = frame_diff
             runtime_globals["find_shortest_path"] = find_shortest_path
-            runtime_globals["general_lattice_search"] = general_lattice_search
             runtime_globals["verify_retrodiction"] = verify_retrodiction
             runtime_globals["solve_pushable_crates"] = solve_pushable_crates
             runtime_globals["solve_bipartite_assignment"] = solve_bipartite_assignment
-            runtime_globals["AVOPopulationSupervisor"] = AVOPopulationSupervisor
-            runtime_globals["System1ReflexiveRouter"] = System1ReflexiveRouter
-            if "PersistentGameMemory" in globals():
-                runtime_globals["PersistentGameMemory"] = PersistentGameMemory
-                if "_persistent_game_memory" not in runtime_globals:
-                    runtime_globals["memory"] = PersistentGameMemory()
-                    runtime_globals["_persistent_game_memory"] = runtime_globals["memory"]
-                else:
-                    runtime_globals["memory"] = runtime_globals["_persistent_game_memory"]
-            if "_avo_supervisor" not in runtime_globals:
-                runtime_globals["avo"] = AVOPopulationSupervisor()
-                runtime_globals["_avo_supervisor"] = runtime_globals["avo"]
-            else:
-                runtime_globals["avo"] = runtime_globals["_avo_supervisor"]
-            if "_system1_router" not in runtime_globals:
-                runtime_globals["system1"] = System1ReflexiveRouter()
-                runtime_globals["_system1_router"] = runtime_globals["system1"]
-            else:
-                runtime_globals["system1"] = runtime_globals["_system1_router"]
             runtime_globals["valid_actions"] = [str(item) for item in state_payload.get("valid_actions", [])]
             runtime_globals["death_ledger"] = state_payload.get("death_ledger") or {"attempts": []}
             runtime_globals["last_action_call_result"] = action_result
@@ -620,11 +600,6 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             ]
 
         runtime_globals["action"] = action
-        if "make_verification_commit" in globals():
-            runtime_globals["commit"] = make_verification_commit(
-                action,
-                lambda: runtime_globals.get("current_frame"),
-            )
         if initial.get("animation_enabled"):
             # Globals rather than attributes on last_transition: after a death
             # the harness appends a RESET entry, so last_transition is the
