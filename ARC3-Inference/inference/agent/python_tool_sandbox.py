@@ -415,6 +415,8 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
             runtime_globals["solve_pushable_crates"] = solve_pushable_crates
             runtime_globals["solve_bipartite_assignment"] = solve_bipartite_assignment
             # Archimedes-3 Programmatic Neurosymbolic Workbench & SOCSE
+            runtime_globals["RenderedMooreMachine"] = RenderedMooreMachine
+            runtime_globals["ABSTAIN"] = ABSTAIN
             runtime_globals["socse"] = PurePythonSOCSE
             runtime_globals["workbench"] = PurePythonWorkbench(history)
             runtime_globals["planner"] = PurePythonAStarPlanner

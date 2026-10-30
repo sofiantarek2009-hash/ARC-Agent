@@ -233,6 +233,36 @@ def solve_bipartite_assignment(sources, targets):
     return result
 
 
+ABSTAIN = -1
+
+
+class RenderedMooreMachine:
+    """Deterministic Rendered Moore Machine base class in sandbox."""
+
+    def __init__(self, frame_0, level_idx=1):
+        self.state = self.init_state(frame_0, level_idx)
+
+    def init_state(self, frame_0, level_idx=1):
+        return {
+            "grid": [list(r) for r in frame_0],
+            "level": level_idx,
+            "step": 0,
+            "latent_flags": {},
+        }
+
+    def transition(self, state, action, action_data=None):
+        import copy
+        nxt = copy.deepcopy(state)
+        nxt["step"] += 1
+        return nxt
+
+    def render(self, state):
+        return state.get("grid", [])
+
+    def predict_outcome(self, state):
+        return "PLAYABLE"
+
+
 class PurePythonSOCSE:
     """Zero-dependency Spatiotemporal Object-Centric State Estimator for Sandbox."""
 
@@ -358,22 +388,27 @@ class PurePythonWorkbench:
                         "gameplay_changed": bool(res.get("gameplay_changed", True)),
                     })
 
-    def retrodict_hypothesis(self, transition_fn):
-        """Tests candidate transition function against all recorded history transitions.
+    def retrodict_hypothesis(self, transition_fn_or_class):
+        """Tests candidate transition function or RenderedMooreMachine class against all recorded history transitions.
         
         Args:
-            transition_fn: callable (grid, action_str) -> predicted_grid
+            transition_fn_or_class: callable (grid, action_str) -> predicted_grid
+                                    OR RenderedMooreMachine class
             
         Returns:
-            dict with accuracy, dynamic_recall, and first_failure if any.
+            dict with accuracy, dynamic_recall, coverage, and first_failure if any.
         """
         if not self.transitions:
-            return {"accuracy": 1.0, "dynamic_recall": 1.0, "transitions_checked": 0}
+            return {"accuracy": 1.0, "dynamic_recall": 1.0, "coverage": 1.0, "transitions_checked": 0}
+
+        # Check if argument is a Moore machine class or instance
+        is_class = isinstance(transition_fn_or_class, type)
 
         correct_cells = 0
         total_cells = 0
         dyn_correct = 0
         dyn_total = 0
+        covered_cells = 0
         first_failure = None
 
         for t in self.transitions:
@@ -384,7 +419,14 @@ class PurePythonWorkbench:
             w = len(b_grid[0]) if h > 0 else 0
 
             try:
-                pred_grid = transition_fn(b_grid, act)
+                if is_class:
+                    machine = transition_fn_or_class(b_grid, level_idx=1)
+                    nxt_state = machine.transition(machine.state, act)
+                    pred_grid = machine.render(nxt_state)
+                elif callable(transition_fn_or_class):
+                    pred_grid = transition_fn_or_class(b_grid, act)
+                else:
+                    pred_grid = None
             except Exception as exc:
                 if first_failure is None:
                     first_failure = {
@@ -396,31 +438,36 @@ class PurePythonWorkbench:
 
             for r in range(h):
                 for c in range(w):
-                    actual_changed = (b_grid[r][c] != a_grid[r][c])
-                    if actual_changed:
-                        dyn_total += 1
-                        if pred_grid and pred_grid[r][c] == a_grid[r][c]:
-                            dyn_correct += 1
+                    pred_val = pred_grid[r][c] if pred_grid and r < len(pred_grid) and c < len(pred_grid[r]) else None
+                    if pred_val != -1:  # Not abstained
+                        covered_cells += 1
+                        actual_changed = (b_grid[r][c] != a_grid[r][c])
+                        if actual_changed:
+                            dyn_total += 1
+                            if pred_val == a_grid[r][c]:
+                                dyn_correct += 1
 
-                    total_cells += 1
-                    if pred_grid and pred_grid[r][c] == a_grid[r][c]:
-                        correct_cells += 1
-                    elif first_failure is None:
-                        first_failure = {
-                            "turn": t["turn"],
-                            "action": act,
-                            "r": r,
-                            "c": c,
-                            "expected": a_grid[r][c],
-                            "predicted": pred_grid[r][c] if pred_grid else None,
-                        }
+                        total_cells += 1
+                        if pred_val == a_grid[r][c]:
+                            correct_cells += 1
+                        elif first_failure is None:
+                            first_failure = {
+                                "turn": t["turn"],
+                                "action": act,
+                                "r": r,
+                                "c": c,
+                                "expected": a_grid[r][c],
+                                "predicted": pred_val,
+                            }
 
         acc = (correct_cells / total_cells) if total_cells > 0 else 1.0
         rec_delta = (dyn_correct / dyn_total) if dyn_total > 0 else 1.0
+        cov = (covered_cells / max(1, len(self.transitions) * h * w))
 
         return {
             "accuracy": acc,
             "dynamic_recall": rec_delta,
+            "coverage": cov,
             "transitions_checked": len(self.transitions),
             "first_failure": first_failure,
         }
