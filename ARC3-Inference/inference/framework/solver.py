@@ -555,7 +555,9 @@ class _HarnessGameSession:
             candidates.append(soft_remaining)
         if not candidates:
             return None
-        return max(0.1, min(candidates))
+        # Protect active SGLang generation requests from artificial micro-timeout aborts
+        # when global clocks shrink near loop boundaries. self.should_stop handles game cutoff.
+        return max(60.0, min(candidates))
 
     def token_limit_reached(self) -> bool:
         """Whether this game has generated its allowance.

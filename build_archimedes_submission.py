@@ -96,13 +96,14 @@ def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
     nb["cells"][4]["source"] = [cell_4_src]
     print(f"[NOTEBOOK] Updated Cell 4 in {notebook_path.name} with Archimedes-3 extractor.")
 
-    # Cell 12: Remove --tool-call-parser qwen3_coder (Mitigating SGLang Issue #36537 token-0 loop)
+    # Cell 12: Ensure --tool-call-parser qwen3_coder is present for OpenAI-format tool calling
     cell_12_src = "".join(nb["cells"][12]["source"])
-    old_parser_arg = '"--reasoning-parser", "qwen3", "--tool-call-parser", "qwen3_coder",'
-    new_parser_arg = '"--reasoning-parser", "qwen3",'
-    if old_parser_arg in cell_12_src:
-        cell_12_src = cell_12_src.replace(old_parser_arg, new_parser_arg)
-        print(f"[NOTEBOOK] Mitigated SGLang Issue #36537 in Cell 12: Removed --tool-call-parser qwen3_coder from {notebook_path.name}.")
+    if '"--tool-call-parser", "qwen3_coder"' not in cell_12_src:
+        cell_12_src = cell_12_src.replace(
+            '"--reasoning-parser", "qwen3",',
+            '"--reasoning-parser", "qwen3", "--tool-call-parser", "qwen3_coder",',
+        )
+        print(f"[NOTEBOOK] Restored --tool-call-parser qwen3_coder in Cell 12 for {notebook_path.name}.")
     nb["cells"][12]["source"] = [cell_12_src]
 
     # Cell 16: Fast-track offline dry-run while keeping 100% full time & full games on real competition rerun
@@ -170,6 +171,14 @@ def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
         cell_20_src = cell_20_src.replace(old_c20_block, new_c20_block)
         print(f"[NOTEBOOK] Fast-tracked Cell 20 offline dry-run in {notebook_path.name}.")
     nb["cells"][20]["source"] = [cell_20_src]
+
+    # Enforce GPU metadata for Kaggle competition runner
+    if "metadata" in nb:
+        if "kaggle" not in nb["metadata"]:
+            nb["metadata"]["kaggle"] = {}
+        nb["metadata"]["kaggle"]["isGpuEnabled"] = True
+        nb["metadata"]["kaggle"]["accelerator"] = "nvidiaRtxPro6000"
+        print(f"[NOTEBOOK] Enforced isGpuEnabled=True and accelerator=nvidiaRtxPro6000 in {notebook_path.name}.")
 
     with open(notebook_path, "w", encoding="utf-8") as f:
         json.dump(nb, f, indent=1, ensure_ascii=False)
