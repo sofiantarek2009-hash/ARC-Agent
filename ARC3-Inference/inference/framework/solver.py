@@ -10,6 +10,7 @@ import html
 import logging
 import json
 import os
+import random
 import re
 import subprocess
 import threading
@@ -722,7 +723,8 @@ class _HarnessGameSession:
                     retry_analysis_step = analysis_step
                     if self.should_stop():
                         break
-                    time.sleep(ANALYZER_RETRY_BACKOFF_SECONDS)
+                    retry_delay = min(1.0, ANALYZER_RETRY_BACKOFF_SECONDS * (1.5 ** min(consecutive_failures, 4))) + random.uniform(0.0, 0.05)
+                    time.sleep(retry_delay)
                     continue
 
                 # a turn that came back at all clears the run: the limit is for
@@ -1522,6 +1524,8 @@ class HarnessSolver(Solver):
         # attributes always exist by the time a game asks for a slot.
         self._warmup_remaining = WARMUP_ACTION_GAMES
         self._warmup_lock = threading.Lock()
+        from inference.utils.serving_watchdog import ServingStabilityWatchdog
+        self._serving_watchdog = ServingStabilityWatchdog()
         if self.start_local_server:
             self._start_local_servers()
         self._worker_pool = ThreadPoolExecutor(
@@ -1846,6 +1850,17 @@ class HarnessSolver(Solver):
             else datetime.now()
         )
         return max(0.0, (self.soft_end_time - now).total_seconds())
+
+    def is_salvage_mode(self) -> bool:
+        """Dynamic Mode Switching (§9 & §31.2 Innovation 13).
+        
+        Transitions from Full Mode into Salvage Mode at T_remaining <= 1980s (8.20h),
+        disabling deep multi-turn code synthesis in favor of fast-path greedy/A* completion.
+        """
+        rem = self.soft_time_remaining_seconds()
+        if rem is None:
+            return False
+        return rem <= 1980.0
 
     def _local_server_for_game_index(
         self, game_index: int

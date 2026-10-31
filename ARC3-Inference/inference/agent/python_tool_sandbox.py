@@ -343,8 +343,7 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
         return normalized
 
 
-    def main():
-        initial = _recv()
+    def _run_single_snippet(initial):
         global COLOR_CHARS
         COLOR_CHARS = str(initial.get("color_chars") or "")
         timeout_seconds = max(1, int(initial.get("timeout_seconds", 30)))
@@ -455,6 +454,10 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
         class RepeatedActionInStateError(BaseException):
             pass
 
+        class SurpriseAbortActionError(BaseException):
+            # Raised by Kepler Commit Gate when surprise divergence occurs during multi-action batch.
+            pass
+
         # Raised when a PREVIOUS action in this snippet changed nothing, and the
         # snippet then tries to act again. Deliberately a plain Exception, not
         # BaseException: unlike the two refusals above this is a warning about
@@ -467,6 +470,7 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
         runtime_globals["KnownDeathActionError"] = KnownDeathActionError
         runtime_globals["StaleStateActionError"] = StaleStateActionError
         runtime_globals["RepeatedActionInStateError"] = RepeatedActionInStateError
+        runtime_globals["SurpriseAbortActionError"] = SurpriseAbortActionError
         # armed when an action changes nothing; scoped to THIS snippet because
         # the closure is rebuilt per execution, so no reset path can be missed
         _stale_state: list[str] = []
@@ -540,6 +544,10 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
                 raise RepeatedActionInStateError(
                     str(action_result.get("stop_detail") or "")
                     or "this action was already run from this board in this snippet"
+                )
+            if action_result.get("stop_reason") == "surprise_abort":
+                raise SurpriseAbortActionError(
+                    str(action_result.get("stop_detail") or "Kepler Commit Gate: unexpected divergence, batch aborted.")
                 )
             if action_result.get("stop_reason") == "known_noop":
                 # nothing executed and no action was spent; halt the snippet so
@@ -781,6 +789,7 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
         except (
             KnownNoOpActionError,
             RepeatedActionInStateError,
+            SurpriseAbortActionError,
             KnownDeathActionError,
             TerminalStateActionError,
             Exception,
@@ -802,6 +811,17 @@ _SANDBOX_BOOTSTRAP = textwrap.dedent(
                     "action_results": _json_safe(action_results),
                 }
             )
+
+
+    def main():
+        while True:
+            try:
+                initial = _recv()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not initial or initial.get("type") == "shutdown":
+                break
+            _run_single_snippet(initial)
 
 
     if __name__ == "__main__":
@@ -878,6 +898,210 @@ def _wait_for_process_exit(process: subprocess.Popen[str], *, timeout: float = 1
         pass
 
 
+class PersistentSandboxWorker:
+    """Long-lived persistent sandbox worker process per thread (§10.2 & §31.1)."""
+
+    def __init__(self, sandbox_dir: str) -> None:
+        self.sandbox_dir = sandbox_dir
+        self.process = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-c", _SANDBOX_BOOTSTRAP],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            cwd=sandbox_dir,
+            env=_sandbox_env(),
+            start_new_session=True,
+        )
+        self.stdout_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _stdout_reader() -> None:
+            assert self.process.stdout is not None
+            for raw_line in self.process.stdout:
+                self.stdout_queue.put(raw_line)
+            self.stdout_queue.put(None)
+
+        self.reader_thread = threading.Thread(target=_stdout_reader, daemon=True)
+        self.reader_thread.start()
+
+    def is_alive(self) -> bool:
+        return self.process.poll() is None
+
+    def close(self) -> None:
+        try:
+            if self.is_alive() and self.process.stdin is not None:
+                _send_json_line(self.process.stdin, {"type": "shutdown"})
+        except Exception:
+            pass
+        _kill_process_group(self.process)
+        _wait_for_process_exit(self.process, timeout=0.5)
+
+
+_worker_local = threading.local()
+
+
+def _get_persistent_worker() -> PersistentSandboxWorker | None:
+    if os.environ.get("ARC3_DISABLE_PERSISTENT_SANDBOX") == "1":
+        return None
+    worker = getattr(_worker_local, "worker", None)
+    if worker is not None and not worker.is_alive():
+        worker.close()
+        worker = None
+        _worker_local.worker = None
+    if worker is None:
+        try:
+            sbox_dir = tempfile.mkdtemp(prefix="rgb_persistent_worker_")
+            worker = PersistentSandboxWorker(sbox_dir)
+            _worker_local.worker = worker
+        except Exception:
+            return None
+    return worker
+
+
+def _execute_sandbox_round(
+    *,
+    process: subprocess.Popen[str],
+    stdout_queue: queue.Queue[str | None],
+    sandbox_dir: str,
+    code: str,
+    timeout_seconds: int,
+    initial_state: dict[str, Any],
+    action_handler: Callable[..., dict[str, Any]],
+    animation_handler: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    kept_functions: list[str] | None = None,
+    retain_imports: bool = False,
+    repair_hints: bool = False,
+    is_persistent: bool = False,
+) -> dict[str, Any]:
+    host_action_results: list[dict[str, Any]] = []
+    assert process.stdin is not None
+    _send_json_line(
+        process.stdin,
+        {
+            "code": code,
+            "kept_functions": list(kept_functions or []),
+            "persistence_enabled": kept_functions is not None,
+            "retain_imports": retain_imports,
+            "repair_hints": repair_hints,
+            "animation_enabled": animation_handler is not None,
+            "timeout_seconds": timeout_seconds,
+            "sandbox_cwd": sandbox_dir,
+            "state": initial_state,
+            "color_chars": ARC_COLOR_CHARS,
+        },
+    )
+
+    deadline = time.monotonic() + max(1, int(timeout_seconds))
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _kill_process_group(process)
+            _wait_for_process_exit(process)
+            return {
+                "error": f"Tool timed out after {timeout_seconds}s",
+                "stdout": "",
+                "action_results": list(host_action_results),
+            }
+
+        try:
+            line = stdout_queue.get(timeout=remaining)
+        except queue.Empty:
+            continue
+        if line is None:
+            stderr = process.stderr.read() if process.stderr else ""
+            _wait_for_process_exit(process)
+            return {
+                "error": _sanitize_host_error_text(stderr),
+                "stdout": "",
+                "action_results": list(host_action_results),
+            }
+
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            stderr = process.stderr.read() if process.stderr else ""
+            _kill_process_group(process)
+            _wait_for_process_exit(process)
+            return {
+                "error": "Sandbox process returned an invalid response.",
+                "stdout": "",
+                "action_results": list(host_action_results),
+            }
+
+        msg_type = str(message.get("type", "")).strip()
+        if msg_type == "animation":
+            if animation_handler is None:
+                _send_json_line(
+                    process.stdin,
+                    {"type": "animation_error",
+                     "error": "Animation frames are not available in this session."},
+                )
+                continue
+            try:
+                animation_payload = animation_handler(dict(message.get("request") or {}))
+            except Exception:  # noqa: BLE001
+                _send_json_line(
+                    process.stdin,
+                    {"type": "animation_error",
+                     "error": "animation failed in sandbox host."},
+                )
+                continue
+            _send_json_line(
+                process.stdin,
+                {"type": "animation_result", "animation": animation_payload},
+            )
+            continue
+        if msg_type == "action":
+            try:
+                action_result_payload = action_handler(
+                    list(message.get("actions") or []),
+                    stale_after=message.get("stale_after"),
+                )
+            except Exception:  # noqa: BLE001
+                _send_json_line(
+                    process.stdin,
+                    {
+                        "type": "action_error",
+                        "error": "action failed in sandbox host.",
+                    },
+                )
+                continue
+            raw_action_result = action_result_payload.get("action_result") or {}
+            if isinstance(raw_action_result, dict):
+                host_action_results.append(dict(raw_action_result))
+            _send_json_line(
+                process.stdin,
+                {
+                    "type": "action_result",
+                    "action_result": raw_action_result,
+                    "state": action_result_payload.get("state") or {},
+                },
+            )
+            continue
+
+        if msg_type in {"final", "error"}:
+            if not is_persistent:
+                _wait_for_process_exit(process)
+            return {
+                "stdout": str(message.get("stdout", "") or ""),
+                "result": message.get("result"),
+                "error": str(message.get("error", "") or ""),
+                "action_results": list(message.get("action_results") or host_action_results),
+                "keepable_functions": list(message.get("keepable_functions") or []),
+                **({"retention_rejected": message.get("retention_rejected", [])}
+                   if kept_functions is not None else {}),
+            }
+
+        _kill_process_group(process)
+        _wait_for_process_exit(process)
+        return {
+            "error": "Sandbox process returned an unknown message type.",
+            "stdout": "",
+            "action_results": list(host_action_results),
+        }
+
+
 def run_sandboxed_python(
     *,
     code: str,
@@ -889,8 +1113,28 @@ def run_sandboxed_python(
     retain_imports: bool = False,
     repair_hints: bool = False,
 ) -> dict[str, Any]:
+    worker = _get_persistent_worker()
+    if worker is not None and worker.is_alive():
+        try:
+            return _execute_sandbox_round(
+                process=worker.process,
+                stdout_queue=worker.stdout_queue,
+                sandbox_dir=worker.sandbox_dir,
+                code=code,
+                timeout_seconds=timeout_seconds,
+                initial_state=initial_state,
+                action_handler=action_handler,
+                animation_handler=animation_handler,
+                kept_functions=kept_functions,
+                retain_imports=retain_imports,
+                repair_hints=repair_hints,
+                is_persistent=True,
+            )
+        except Exception:
+            worker.close()
+            _worker_local.worker = None
+
     with tempfile.TemporaryDirectory(prefix="rgb_python_tool_") as sandbox_dir:
-        host_action_results: list[dict[str, Any]] = []
         try:
             process = subprocess.Popen(
                 [sys.executable, "-I", "-S", "-c", _SANDBOX_BOOTSTRAP],
@@ -922,128 +1166,17 @@ def run_sandboxed_python(
 
         threading.Thread(target=_stdout_reader, daemon=True).start()
 
-        _send_json_line(
-            process.stdin,
-            {
-                "code": code,
-                "kept_functions": list(kept_functions or []),
-                "persistence_enabled": kept_functions is not None,
-                "retain_imports": retain_imports,
-                "repair_hints": repair_hints,
-                "animation_enabled": animation_handler is not None,
-                "timeout_seconds": timeout_seconds,
-                "sandbox_cwd": sandbox_dir,
-                "state": initial_state,
-                "color_chars": ARC_COLOR_CHARS,
-            },
+        return _execute_sandbox_round(
+            process=process,
+            stdout_queue=stdout_queue,
+            sandbox_dir=sandbox_dir,
+            code=code,
+            timeout_seconds=timeout_seconds,
+            initial_state=initial_state,
+            action_handler=action_handler,
+            animation_handler=animation_handler,
+            kept_functions=kept_functions,
+            retain_imports=retain_imports,
+            repair_hints=repair_hints,
+            is_persistent=False,
         )
-
-        deadline = time.monotonic() + max(1, int(timeout_seconds))
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _kill_process_group(process)
-                _wait_for_process_exit(process)
-                return {
-                    "error": f"Tool timed out after {timeout_seconds}s",
-                    "stdout": "",
-                    "action_results": list(host_action_results),
-                }
-
-            try:
-                line = stdout_queue.get(timeout=remaining)
-            except queue.Empty:
-                continue
-            if line is None:
-                stderr = process.stderr.read()
-                _wait_for_process_exit(process)
-                return {
-                    "error": _sanitize_host_error_text(stderr),
-                    "stdout": "",
-                    "action_results": list(host_action_results),
-                }
-
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                stderr = process.stderr.read()
-                _kill_process_group(process)
-                _wait_for_process_exit(process)
-                return {
-                    "error": "Sandbox process returned an invalid response.",
-                    "stdout": "",
-                    "action_results": list(host_action_results),
-                }
-
-            msg_type = str(message.get("type", "")).strip()
-            if msg_type == "animation":
-                if animation_handler is None:
-                    _send_json_line(
-                        process.stdin,
-                        {"type": "animation_error",
-                         "error": "Animation frames are not available in this session."},
-                    )
-                    continue
-                try:
-                    animation_payload = animation_handler(dict(message.get("request") or {}))
-                except Exception:  # noqa: BLE001
-                    _send_json_line(
-                        process.stdin,
-                        {"type": "animation_error",
-                         "error": "animation failed in sandbox host."},
-                    )
-                    continue
-                _send_json_line(
-                    process.stdin,
-                    {"type": "animation_result", "animation": animation_payload},
-                )
-                continue
-            if msg_type == "action":
-                try:
-                    # the message carries more than the action list: stale_after
-                    # tells the solver a previous action in this snippet changed
-                    # nothing, which it weighs after its own guards
-                    action_result_payload = action_handler(
-                        list(message.get("actions") or []),
-                        stale_after=message.get("stale_after"),
-                    )
-                except Exception:  # noqa: BLE001
-                    _send_json_line(
-                        process.stdin,
-                        {
-                            "type": "action_error",
-                            "error": "action failed in sandbox host.",
-                        },
-                    )
-                    continue
-                raw_action_result = action_result_payload.get("action_result") or {}
-                if isinstance(raw_action_result, dict):
-                    host_action_results.append(dict(raw_action_result))
-                _send_json_line(
-                    process.stdin,
-                    {
-                        "type": "action_result",
-                        "action_result": raw_action_result,
-                        "state": action_result_payload.get("state") or {},
-                    },
-                )
-                continue
-
-            if msg_type in {"final", "error"}:
-                _wait_for_process_exit(process)
-                return {
-                    "stdout": str(message.get("stdout", "") or ""),
-                    "result": message.get("result"),
-                    "error": str(message.get("error", "") or ""),
-                    "action_results": list(message.get("action_results") or host_action_results),
-                    "keepable_functions": list(message.get("keepable_functions") or []),
-                    **({"retention_rejected": message.get("retention_rejected", [])}
-                       if kept_functions is not None else {}),
-                }
-
-            _wait_for_process_exit(process)
-            return {
-                "error": "Sandbox process returned an unknown message type.",
-                "stdout": "",
-                "action_results": list(host_action_results),
-            }

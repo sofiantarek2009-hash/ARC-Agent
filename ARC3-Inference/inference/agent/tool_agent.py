@@ -5770,6 +5770,13 @@ class ToolAgent:
             {"action": to_model_action(action_name), **(action_data or {})}
         )
         self._noop_guard_pre_hash = state_hash
+        if hasattr(self, "_kepler_gate") and self._kepler_gate.last_fault is not None:
+            fault = self._kepler_gate.last_fault
+            return (
+                "surprise_abort",
+                f"Kepler Commit Gate: surprise detected ({fault.error_type} {fault.root_cause}). "
+                "Batch aborted to prevent open-loop disaster.",
+            )
         if self._noop_guard_deaths_enabled and not self._guard_death_override_batch:
             # with lookahead off, only THIS action is considered, so a match
             # can be found solely at offset 0 - the per-position behaviour
@@ -5906,6 +5913,20 @@ class ToolAgent:
             # filtering on `changed` here would buy nothing
             self._repeat_state_seen.add((state_hash, action_sig))
             guard.observe(state_hash, action_sig, gameplay_changed=changed)
+            # Kepler Commit Gate: Evaluate intermediate step surprise (§23.2)
+            if hasattr(self, "_kepler_gate") and self._kepler_gate.expected_frames:
+                step_idx = len(trace) - 1
+                curr_grid = raw_payload.get("grid") or raw_payload.get("state", {}).get("grid")
+                if curr_grid:
+                    is_surprise, fault = self._kepler_gate.evaluate_step(
+                        before_grid=raw_payload.get("before_grid") or [],
+                        action=action_sig,
+                        actual_grid=curr_grid,
+                        step_idx=step_idx,
+                        actual_status="PLAYABLE" if not raw_payload.get("done") else "WIN",
+                    )
+                    if is_surprise:
+                        self._last_abductive_fault = fault
 
     def _compact_action_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         compact = {
@@ -6344,11 +6365,7 @@ class ToolAgent:
         messages.append(message)
         if _summary_interval_tokens() <= 0:
             return
-        added = max(
-            0,
-            self._estimate_request_input_tokens([message])
-            - self._estimate_request_input_tokens([]),
-        )
+        added = self._estimate_message_tokens(message)
         self._summary_context_tokens_since_attempt = (
             getattr(self, "_summary_context_tokens_since_attempt", 0) + added
         )
@@ -6524,6 +6541,27 @@ class ToolAgent:
             "ROLLING SUMMARY SALVAGED" if dropped_call else "ROLLING SUMMARY",
             text,
         )
+
+    def _estimate_message_tokens(self, message: dict[str, Any]) -> int:
+        """Cached estimate of tokens for an individual message to avoid O(N^2) reserialization."""
+        cache = getattr(self, "_msg_token_cache", None)
+        if cache is None:
+            cache = {}
+            self._msg_token_cache = cache
+        msg_id = id(message)
+        cached = cache.get(msg_id)
+        if cached is not None:
+            return cached
+        try:
+            rendered = json.dumps(message, ensure_ascii=False, default=str)
+        except TypeError:
+            rendered = str(message)
+        chars = self._text_chars_per_token or _text_token_chars()
+        est = max(1, int(len(rendered) / chars) + (1 if len(rendered) % chars else 0))
+        if len(cache) > 20000:
+            cache.clear()
+        cache[msg_id] = est
+        return est
 
     def _estimate_request_input_tokens(
         self,
@@ -6831,8 +6869,8 @@ class ToolAgent:
                 and _head_is_summary()
             )
 
+        used = self._estimate_request_input_tokens([system_message, *history], tools=tools)
         while history:
-            used = self._estimate_request_input_tokens([system_message, *history], tools=tools)
             over_budget = used > budget_tokens
             if not over_budget and not draining:
                 break
@@ -6844,22 +6882,27 @@ class ToolAgent:
                 if _stop_early(used):
                     break
                 probe = list(history)
+                len_before = len(probe)
                 if not self._drop_oldest_history_block(probe, preserve_recent=preserve_recent):
                     break
-                after = self._estimate_request_input_tokens(
-                    [system_message, *probe], tools=tools
-                )
+                dropped_count = len_before - len(probe)
+                after = used - sum(self._estimate_message_tokens(m) for m in history[:dropped_count])
                 if after < target_tokens:
                     break
                 history[:] = probe
+                used = after
                 continue
             if not floor_mode and used <= (target_tokens if draining else budget_tokens):
                 break
             if _stop_early(used):
                 break
             draining = True
+            len_before = len(history)
+            old_history = list(history)
             if not self._drop_oldest_history_block(history, preserve_recent=preserve_recent):
                 break
+            dropped_count = len_before - len(history)
+            used -= sum(self._estimate_message_tokens(m) for m in old_history[:dropped_count])
         history = self._drop_until_first_user_message(history)
         # A dropped message invalidates the server's prefix for this
         # conversation, so the next request has to be prefilled from the
@@ -6905,6 +6948,24 @@ class ToolAgent:
             if solver_obj is not None:
                 solver_obj.action_guard_hook = self._action_guard_hook
         self._current_valid_actions = _normalize_valid_actions(valid_actions)
+
+        # FAST-PATH REFLEX REGIME (§11, §12, §23):
+        # If an active pre-verified plan exists with 0 surprise divergence, execute next plan step immediately with 0 LLM calls (<5ms CPU)
+        if (
+            hasattr(self, "_kepler_gate")
+            and self._kepler_gate.active_plan
+            and self._kepler_gate.last_fault is None
+            and self._step_env_callback is not None
+        ):
+            next_action = self._kepler_gate.active_plan.pop(0)
+            normalized = self._normalize_python_actions([next_action])
+            try:
+                raw_payload = self._step_env_callback({"actions": normalized})
+                if raw_payload and raw_payload.get("executed"):
+                    return AnalyzerTurnResult(step_executed=True, reasoning="Fast-path pre-verified plan step executed.")
+            except Exception as e:
+                log.warning("Fast-path plan step execution failed: %s; falling back to slow path.", e)
+                self._kepler_gate.abort_plan()
 
         analyzer_log = transcript_path or (state_path.parent / f"{state_path.stem}_analyzer.txt")
         prompt_log = _resolve_prompt_log_path(state_path)

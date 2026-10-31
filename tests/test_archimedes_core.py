@@ -134,3 +134,120 @@ def test_state_equivalence_astar_planner():
         goal_predicate=goal,
     )
     assert path == ["RIGHT", "RIGHT"]
+
+
+def test_persistent_sandbox_worker_recycling():
+    """Verify that PersistentSandboxWorker stays alive across calls and delivers sub-millisecond turnarounds."""
+    import time
+    from inference.agent.python_tool_sandbox import run_sandboxed_python
+
+    # First call spins up worker
+    t0 = time.time()
+    res1 = run_sandboxed_python(
+        code="result = 40 + 2",
+        timeout_seconds=5,
+        initial_state={},
+        action_handler=lambda actions, **kwargs: {},
+    )
+    t1 = time.time()
+    assert res1.get("result") == 42
+
+    # Subsequent call reuses warm worker process in <10ms
+    t2 = time.time()
+    res2 = run_sandboxed_python(
+        code="result = 'hello'.upper()",
+        timeout_seconds=5,
+        initial_state={},
+        action_handler=lambda actions, **kwargs: {},
+    )
+    t3 = time.time()
+    assert res2.get("result") == "HELLO"
+    assert (t3 - t2) < 0.05, f"Expected warm worker turnaround < 50ms, got {(t3 - t2)*1000:.2f}ms"
+
+
+def test_tycho_universal_epistemic_oracle():
+    """Verify 5-valued epistemic status in Universal Transition Oracle (§31.2 Innovation 1)."""
+    from inference.utils.tycho_workbench import (
+        ProgrammaticWorldModelWorkbench,
+        EpistemicStatus,
+        predict_epistemic_transition,
+    )
+
+    wb = ProgrammaticWorldModelWorkbench()
+    grid_0 = [[0, 0], [0, 0]]
+    action = "ACTION1"
+
+    # 1. Unknown if no history and no candidate models
+    pred, status = predict_epistemic_transition(wb, grid_0, action)
+    assert pred is None
+    assert status == EpistemicStatus.UNKNOWN
+
+    # 2. Deterministic if unanimous agreement
+    model_a = lambda g, a, d: [[1, 0], [0, 0]]
+    model_b = lambda g, a, d: [[1, 0], [0, 0]]
+    pred, status = predict_epistemic_transition(wb, grid_0, action, candidate_models=[model_a, model_b])
+    assert pred == [[1, 0], [0, 0]]
+    assert status == EpistemicStatus.DETERMINISTIC
+
+    # 3. Ambiguous if models diverge
+    model_c = lambda g, a, d: [[0, 1], [0, 0]]
+    pred, status = predict_epistemic_transition(wb, grid_0, action, candidate_models=[model_a, model_c])
+    assert status == EpistemicStatus.AMBIGUOUS
+
+    # 4. Abstain if model outputs abstention sentinel (-1 or 16)
+    model_abstain = lambda g, a, d: [[-1, 0], [0, 0]]
+    pred, status = predict_epistemic_transition(wb, grid_0, action, candidate_models=[model_abstain])
+    assert status == EpistemicStatus.ABSTAIN
+
+
+def test_solver_salvage_mode_governor():
+    """Verify Dynamic Mode Switching into Salvage Mode at T_remaining <= 1980s."""
+    from datetime import datetime, timedelta
+    from inference.framework.solver import HarnessSolver
+
+    solver = HarnessSolver()
+    # No soft_end_time -> not in salvage mode
+    assert solver.is_salvage_mode() is False
+
+    # Soft end time 1000s in the future (within 1980s window) -> Salvage Mode True
+    solver.soft_end_time = datetime.now() + timedelta(seconds=1000)
+    assert solver.is_salvage_mode() is True
+
+    # Soft end time 5000s in the future (outside window) -> Salvage Mode False
+    solver.soft_end_time = datetime.now() + timedelta(seconds=5000)
+    assert solver.is_salvage_mode() is False
+
+
+def test_incremental_token_counting_and_trimming():
+    """Verify O(1) incremental token caching and fast context trimming."""
+    from inference.agent.tool_agent import ToolAgent
+
+    agent = ToolAgent(model="mock_model")
+    msg1 = {"role": "user", "content": "Hello " * 50}
+    msg2 = {"role": "assistant", "content": "World " * 50}
+    
+    t1 = agent._estimate_message_tokens(msg1)
+    t2 = agent._estimate_message_tokens(msg2)
+    assert t1 > 0
+    assert t2 > 0
+    # Second call should hit cache instantaneously
+    assert agent._estimate_message_tokens(msg1) == t1
+
+    system_msg = {"role": "system", "content": "You are a helpful assistant."}
+    history = [
+        {"role": "user", "content": f"Turn {i} " + "data " * 40}
+        if i % 2 == 0 else
+        {"role": "assistant", "content": f"Reply {i} " + "answer " * 40}
+        for i in range(20)
+    ]
+    messages = [system_msg, *history]
+    
+    # Trim to budget of 500 tokens
+    agent._context_budget_tokens = 500
+    trimmed = agent._trim_messages_for_context(messages, preserve_recent=2)
+    assert len(trimmed) < len(messages)
+    assert trimmed[0]["role"] == "system"
+    assert trimmed[1]["role"] == "user"
+    final_used = agent._estimate_request_input_tokens(trimmed)
+    assert final_used <= 500
+

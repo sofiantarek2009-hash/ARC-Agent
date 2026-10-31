@@ -145,3 +145,60 @@ class ProgrammaticWorldModelWorkbench:
     def reset_level(self) -> None:
         """Clears tape on level transition."""
         self.transition_tape.clear()
+
+
+class EpistemicStatus:
+    """5-valued epistemic output (§31.2 Innovation 1)."""
+    DETERMINISTIC = "DETERMINISTIC"
+    PROBABLE = "PROBABLE"
+    AMBIGUOUS = "AMBIGUOUS"
+    UNKNOWN = "UNKNOWN"
+    ABSTAIN = "ABSTAIN"
+
+
+def predict_epistemic_transition(
+    workbench: ProgrammaticWorldModelWorkbench,
+    current_grid: list[list[int]],
+    action: str,
+    action_data: dict[str, Any] | None = None,
+    candidate_models: list[Callable[..., list[list[int]]]] | None = None,
+    abstain_val: int = -1,
+) -> tuple[list[list[int]] | None, str]:
+    """Universal Transition Oracle evaluating candidate models (§31.2 Innovation 1).
+    
+    Returns:
+        (predicted_grid, EpistemicStatus)
+    """
+    if not candidate_models:
+        for rec in reversed(workbench.transition_tape):
+            if rec.before_grid == current_grid and rec.action == action:
+                return [list(r) for r in rec.after_grid], EpistemicStatus.DETERMINISTIC
+        return None, EpistemicStatus.UNKNOWN
+
+    predictions = []
+    abstained = False
+    for model in candidate_models:
+        try:
+            pred = model([list(r) for r in current_grid], action, action_data or {})
+            has_abstain = any(any(c == abstain_val or c == 16 for c in row) for row in pred)
+            if has_abstain:
+                abstained = True
+            predictions.append(pred)
+        except Exception:
+            continue
+
+    if not predictions:
+        return None, EpistemicStatus.UNKNOWN
+    if abstained:
+        return predictions[0], EpistemicStatus.ABSTAIN
+
+    first = predictions[0]
+    if all(p == first for p in predictions):
+        return first, EpistemicStatus.DETERMINISTIC
+    elif len(predictions) >= 3:
+        for candidate in predictions:
+            if predictions.count(candidate) > len(predictions) / 2:
+                return candidate, EpistemicStatus.PROBABLE
+        return predictions[0], EpistemicStatus.AMBIGUOUS
+    else:
+        return predictions[0], EpistemicStatus.AMBIGUOUS
