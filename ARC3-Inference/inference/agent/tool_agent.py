@@ -92,6 +92,18 @@ _TOOL_CALL_PARAMETER_RE = re.compile(
     r"<parameter=([^>]+)>\s*(.*?)\s*</parameter>",
     flags=re.DOTALL | re.IGNORECASE,
 )
+_QWEN_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_XML_PYTHON_BLOCK_RE = re.compile(
+    r"<(?:python|code)>\s*(.*?)\s*</(?:python|code)>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_XML_ACTION_BLOCK_RE = re.compile(
+    r"<action>\s*(.*?)\s*</action>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
 _PYTHON_BLOCK_RE = re.compile(
     r"```(?:python)?\s*\n(.*?)\n```",
     flags=re.DOTALL | re.IGNORECASE,
@@ -133,6 +145,8 @@ def _contains_tool_call_markup(*chunks: str) -> bool:
         lowered = chunk.lower()
         if (
             "<tool_call" in lowered
+            or "<python" in lowered
+            or "<action" in lowered
             or "<function=" in lowered
             or "```python" in lowered
             or ("```" in chunk and "action(" in chunk)
@@ -146,6 +160,9 @@ def _strip_tool_call_markup(text: str) -> str:
     if not text.strip():
         return ""
     stripped = _TOOL_CALL_BLOCK_RE.sub("", text)
+    stripped = _QWEN_TOOL_CALL_RE.sub("", stripped)
+    stripped = _XML_PYTHON_BLOCK_RE.sub("", stripped)
+    stripped = _XML_ACTION_BLOCK_RE.sub("", stripped)
     stripped = _PYTHON_BLOCK_RE.sub("", stripped)
     return stripped.strip()
 
@@ -153,36 +170,114 @@ def _strip_tool_call_markup(text: str) -> str:
 def _recover_tool_calls_from_markup(*chunks: str) -> list[dict[str, Any]]:
     recovered: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+
+    # 1. Native Qwen tool_call JSON: <tool_call>\n{"name": ..., "arguments": ...}\n</tool_call>
     for chunk in chunks:
         if not chunk.strip():
             continue
-        for match in _TOOL_CALL_BLOCK_RE.finditer(chunk):
-            tool_name = str(match.group(1) or "").strip()
-            if not tool_name:
+        for match in _QWEN_TOOL_CALL_RE.finditer(chunk):
+            raw_json = str(match.group(1) or "").strip()
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict) and ("name" in parsed or "arguments" in parsed):
+                    tool_name = str(parsed.get("name", "python")).strip()
+                    args = parsed.get("arguments", {})
+                    if not isinstance(args, str):
+                        args = json.dumps(args, ensure_ascii=True)
+                    cache_key = (tool_name, args)
+                    if cache_key in seen:
+                        continue
+                    seen.add(cache_key)
+                    recovered.append({
+                        "id": f"qwen-call-{len(recovered) + 1}",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args},
+                    })
+            except Exception:
+                pass
+
+    # 2. Legacy / ChatGLM format: <tool_call><function=name><parameter=...></function></tool_call>
+    if not recovered:
+        for chunk in chunks:
+            if not chunk.strip():
                 continue
-            raw_body = str(match.group(2) or "")
-            arguments = {
-                str(parameter_name).strip(): value
-                for parameter_name, value in _TOOL_CALL_PARAMETER_RE.findall(raw_body)
-                if str(parameter_name).strip()
-            }
-            cache_key = (
-                tool_name,
-                json.dumps(arguments, ensure_ascii=True, sort_keys=True),
-            )
-            if cache_key in seen:
+            for match in _TOOL_CALL_BLOCK_RE.finditer(chunk):
+                tool_name = str(match.group(1) or "").strip()
+                if not tool_name:
+                    continue
+                raw_body = str(match.group(2) or "")
+                arguments = {
+                    str(parameter_name).strip(): value
+                    for parameter_name, value in _TOOL_CALL_PARAMETER_RE.findall(raw_body)
+                    if str(parameter_name).strip()
+                }
+                cache_key = (
+                    tool_name,
+                    json.dumps(arguments, ensure_ascii=True, sort_keys=True),
+                )
+                if cache_key in seen:
+                    continue
+                seen.add(cache_key)
+                recovered.append(
+                    {
+                        "id": f"markup-call-{len(recovered) + 1}",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(arguments, ensure_ascii=True),
+                        },
+                    }
+                )
+
+    # 3. Direct XML Python: <python>...</python> or <code>...</code>
+    if not recovered:
+        for chunk in chunks:
+            if not chunk.strip():
                 continue
-            seen.add(cache_key)
-            recovered.append(
-                {
-                    "id": f"markup-call-{len(recovered) + 1}",
+            for match in _XML_PYTHON_BLOCK_RE.finditer(chunk):
+                code = match.group(1).strip()
+                if not code:
+                    continue
+                cache_key = ("python", code)
+                if cache_key in seen:
+                    continue
+                seen.add(cache_key)
+                recovered.append({
+                    "id": f"xml-python-call-{len(recovered) + 1}",
                     "type": "function",
                     "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(arguments, ensure_ascii=True),
+                        "name": "python",
+                        "arguments": json.dumps({"code": code}, ensure_ascii=True),
                     },
-                }
-            )
+                })
+
+    # 4. Direct XML Action: <action>['UP', 'DOWN']</action>
+    if not recovered:
+        for chunk in chunks:
+            if not chunk.strip():
+                continue
+            for match in _XML_ACTION_BLOCK_RE.finditer(chunk):
+                action_text = match.group(1).strip()
+                if not action_text:
+                    continue
+                if not action_text.startswith("action("):
+                    code = f"action({action_text})"
+                else:
+                    code = action_text
+                cache_key = ("python", code)
+                if cache_key in seen:
+                    continue
+                seen.add(cache_key)
+                recovered.append({
+                    "id": f"xml-action-call-{len(recovered) + 1}",
+                    "type": "function",
+                    "function": {
+                        "name": "python",
+                        "arguments": json.dumps({"code": code}, ensure_ascii=True),
+                    },
+                })
+
+    # 5. Markdown Python code block: ```python ... ```
     if not recovered:
         for chunk in chunks:
             if not chunk.strip():
