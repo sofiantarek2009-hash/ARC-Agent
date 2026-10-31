@@ -82,7 +82,7 @@ def _env_number(name: str, default: float, cast=float) -> float:
 
 
 ANALYZER_RETRY_BACKOFF_SECONDS = max(
-    0.0, _env_number("ARC3_ANALYZER_RETRY_BACKOFF_SECONDS", 10.0)
+    0.0, _env_number("ARC3_ANALYZER_RETRY_BACKOFF_SECONDS", 0.2)
 )
 # A request that fails outright - a dead endpoint, a refused connection - is
 # reported as retryable and the solver goes back to the top of the loop. With
@@ -861,6 +861,8 @@ class _HarnessGameSession:
 
     def write_viewer_payload(self) -> None:
         if self.solver.job_dir is None:
+            return
+        if os.getenv("TAAF_MINIMAL_DIAGNOSTICS") == "1" or os.getenv("TAAF_RUN_AS_SUBMISSION") == "1":
             return
         self.viewer_data_path.parent.mkdir(parents=True, exist_ok=True)
         run = self.game.game_run

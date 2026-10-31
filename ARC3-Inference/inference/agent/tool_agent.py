@@ -3074,7 +3074,7 @@ def _estimate_tokens(value: Any, chars_per_token: float | None = None) -> int:
         # counted at up to 6x its real size. The trimmer decides when to evict
         # in these units, so the inflation makes it discard history it did not
         # need to - and the error grows with the share of non-ASCII text.
-        rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
     except TypeError:
         rendered = str(value)
     chars = chars_per_token or _text_token_chars()

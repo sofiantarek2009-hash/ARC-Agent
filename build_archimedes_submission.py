@@ -93,6 +93,13 @@ def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
         cell_4_src = cell_4_src.replace("'ARC3_MAX_ACTIVE_STREAMS': 10", "'ARC3_MAX_ACTIVE_STREAMS': 6")
         print(f"[NOTEBOOK] Concurrency Headroom Governor: Adjusted ARC3_MAX_ACTIVE_STREAMS to 6 in {notebook_path.name} (§14.2).")
 
+    if "'ARC3_ANALYZER_RETRY_BACKOFF_SECONDS'" not in cell_4_src:
+        cell_4_src = cell_4_src.replace(
+            "'ARC3_MAX_ACTIVE_STREAMS': 6,",
+            "'ARC3_MAX_ACTIVE_STREAMS': 6,\n    'ARC3_ANALYZER_RETRY_BACKOFF_SECONDS': '0.2',",
+        )
+        print(f"[NOTEBOOK] Injected ARC3_ANALYZER_RETRY_BACKOFF_SECONDS=0.2 in {notebook_path.name}.")
+
     nb["cells"][4]["source"] = [cell_4_src]
     print(f"[NOTEBOOK] Updated Cell 4 in {notebook_path.name} with Archimedes-3 extractor.")
 
@@ -108,6 +115,12 @@ def update_notebook(b64_bundle: str, notebook_path: Path) -> None:
 
     # Cell 16: Fast-track offline dry-run while keeping 100% full time & full games on real competition rerun
     cell_16_src = "".join(nb["cells"][16]["source"])
+    if "bm.solver.concurrency = 120" in cell_16_src:
+        cell_16_src = cell_16_src.replace(
+            "bm.solver.concurrency = 120  # game count should be 110",
+            "bm.solver.concurrency = 8  # Matched to SGLang MAXREQ=10 to eliminate queue wedging",
+        )
+        print(f"[NOTEBOOK] Adjusted TRUE_SUBMISSION concurrency to 8 in {notebook_path.name}.")
     old_c16_block = (
         "else:\n"
         "    if USE_PRIORITY_SCHEDULING:\n"
